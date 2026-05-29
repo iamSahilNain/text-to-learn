@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 require('dotenv').config();
 
 const courseRoutes = require('./routes/courseRoutes');
+const lessonRoutes = require('./routes/lessonRoutes');
 
 const app = express();
 app.use(cors());
@@ -14,6 +15,7 @@ mongoose.connect(process.env.MONGO_URI)
   .catch((err) => console.log('MongoDB error:', err));
 
 app.use('/api/courses', courseRoutes);
+app.use('/api/lessons', lessonRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'Text-to-Learn backend is running' });

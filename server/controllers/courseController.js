@@ -72,5 +72,18 @@ async function getCourses(req, res) {
     res.status(500).json({ error: 'Failed to fetch courses' });
   }
 }
+async function getCourse(req, res) {
+  try {
+    const course = await Course.findById(req.params.id)
+      .populate({
+        path: 'modules',
+        populate: { path: 'lessons' }
+      });
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    res.json(course);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch course' });
+  }
+}
 
-module.exports = { createCourse, getCourses };
+module.exports = { createCourse, getCourses, getCourse };
