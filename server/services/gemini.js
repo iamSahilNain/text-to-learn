@@ -1,37 +1,53 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
 async function generateCourse(topic) {
-  const prompt = `
-You are a curriculum designer. Generate a structured online course for the topic: "${topic}".
-
-Return ONLY a valid JSON object with no markdown, no backticks, no explanation. Just raw JSON.
-
-{
-  "title": "Course title",
-  "description": "Course description",
-  "tags": ["tag1", "tag2"],
-  "modules": [
-    {
-      "title": "Module title",
-      "lessons": ["Lesson 1 title", "Lesson 2 title", "Lesson 3 title"]
-    }
-  ]
+  // MOCK RESPONSE - replace with real Gemini call after quota resets
+  return {
+    title: `Complete Course on ${topic}`,
+    description: `A comprehensive guide to learning ${topic} from beginner to advanced.`,
+    tags: [topic, 'learning', 'education'],
+    modules: [
+      {
+        title: 'Getting Started',
+        lessons: ['Introduction', 'Setting Up Your Environment', 'Core Concepts']
+      },
+      {
+        title: 'Fundamentals',
+        lessons: ['Basic Principles', 'Key Techniques', 'Common Patterns']
+      },
+      {
+        title: 'Advanced Topics',
+        lessons: ['Advanced Concepts', 'Best Practices', 'Real World Applications']
+      }
+    ]
+  };
 }
-
-Rules:
-- 3 to 5 modules
-- 3 to 4 lessons per module
-- Progress from beginner to advanced
-- Be specific and educational
-`;
-
-  const result = await model.generateContent(prompt);
-  const text = result.response.text();
-  const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+async function generateLesson(courseTitle, moduleTitle, lessonTitle) {
+  return {
+    title: lessonTitle,
+    objectives: [
+      `Understand the core concepts of ${lessonTitle}`,
+      `Apply ${lessonTitle} in real scenarios`,
+      `Identify common patterns and best practices`
+    ],
+    content: [
+      { type: 'heading', text: `Introduction to ${lessonTitle}` },
+      { type: 'paragraph', text: `In this lesson, we will explore ${lessonTitle} as part of ${moduleTitle} in the ${courseTitle} course. This is a foundational concept that will help you build a strong understanding of the subject.` },
+      { type: 'heading', text: 'Key Concepts' },
+      { type: 'paragraph', text: `The main ideas behind ${lessonTitle} revolve around understanding how the pieces fit together. Let's break this down step by step.` },
+      { type: 'code', language: 'javascript', text: `// Example code for ${lessonTitle}\nconsole.log('Learning ${lessonTitle}');` },
+      { type: 'heading', text: 'Practice Questions' },
+      {
+        type: 'mcq',
+        question: `What is the primary purpose of ${lessonTitle}?`,
+        options: [
+          'To simplify complex operations',
+          'To improve code readability',
+          'To enhance performance',
+          'All of the above'
+        ],
+        answer: 3,
+        explanation: 'All of these are valid purposes depending on the context.'
+      }
+    ]
+  };
 }
-
-module.exports = { generateCourse };
+module.exports = { generateCourse, generateLesson };

@@ -6,6 +6,7 @@ export default function LessonPage() {
   const navigate = useNavigate()
   const [lesson, setLesson] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState(false)
 
   useEffect(() => {
     fetch(`http://localhost:3001/api/lessons/${lessonId}`)
@@ -13,6 +14,21 @@ export default function LessonPage() {
       .then(data => { setLesson(data); setLoading(false) })
       .catch(() => setLoading(false))
   }, [lessonId])
+
+  async function handleGenerate() {
+    setGenerating(true)
+    try {
+      const res = await fetch(`http://localhost:3001/api/lessons/${lessonId}/generate`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      setLesson(data)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setGenerating(false)
+    }
+  }
 
   if (loading) return (
     <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
@@ -29,14 +45,24 @@ export default function LessonPage() {
         ← Back to course
       </button>
       <h1 className="text-3xl font-bold mb-8">{lesson?.title}</h1>
-      <div className="space-y-6">
-        {lesson?.content?.length > 0
-          ? lesson.content.map((block, i) => (
-              <LessonBlock key={i} block={block} />
-            ))
-          : <p className="text-gray-400">Content coming soon.</p>
-        }
-      </div>
+      {lesson?.content?.length > 0 ? (
+        <div className="space-y-6">
+          {lesson.content.map((block, i) => (
+            <LessonBlock key={i} block={block} />
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-20">
+          <p className="text-gray-400 mb-6">No content yet for this lesson.</p>
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-900 text-white font-semibold rounded-xl px-8 py-4 transition"
+          >
+            {generating ? 'Generating content...' : 'Generate Lesson Content'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
