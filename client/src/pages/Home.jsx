@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { API_URL } from '../api'
 
 export default function Home() {
   const [topic, setTopic] = useState('')
@@ -12,7 +13,7 @@ export default function Home() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('http://localhost:3001/api/courses/generate', {
+      const res = await fetch(`${API_URL}/api/courses/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic })

@@ -1,14 +1,27 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
+import { API_URL } from '../api'
 
 export default function CoursePage() {
   const { courseId } = useParams()
   const navigate = useNavigate()
   const [course, setCourse] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
+
+  // Lazy-load the PDF module (jsPDF is heavy) only when the user exports.
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const { exportCourseToPdf } = await import('../pdf')
+      exportCourseToPdf(course)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   useEffect(() => {
-    fetch(`http://localhost:3001/api/courses/${courseId}`)
+    fetch(`${API_URL}/api/courses/${courseId}`)
       .then(r => r.json())
       .then(data => { setCourse(data); setLoading(false) })
       .catch(() => setLoading(false))
@@ -28,12 +41,21 @@ export default function CoursePage() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white px-6 py-10 max-w-4xl mx-auto">
-      <button
-        onClick={() => navigate('/')}
-        className="text-indigo-400 hover:text-indigo-300 mb-8 flex items-center gap-2"
-      >
-        ← Back
-      </button>
+      <div className="flex items-center justify-between mb-8">
+        <button
+          onClick={() => navigate('/')}
+          className="text-indigo-400 hover:text-indigo-300 flex items-center gap-2"
+        >
+          ← Back
+        </button>
+        <button
+          onClick={handleExport}
+          disabled={exporting}
+          className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-200 text-sm font-medium rounded-lg px-4 py-2 transition"
+        >
+          {exporting ? 'Exporting...' : 'Export PDF'}
+        </button>
+      </div>
       <h1 className="text-4xl font-bold mb-3">{course.title}</h1>
       <p className="text-gray-400 mb-4">{course.description}</p>
       <div className="flex gap-2 mb-10 flex-wrap">
