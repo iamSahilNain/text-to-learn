@@ -4,6 +4,7 @@ const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Course = require('../models/Course');
 const { generateLesson } = require('../services/gemini');
+const { searchVideos } = require('../services/youtube');
 
 router.get('/:id', async (req, res) => {
   try {
@@ -25,7 +26,13 @@ router.post('/:id/generate', async (req, res) => {
 
     const generated = await generateLesson(course.title, module.title, lesson.title);
 
+    lesson.objectives = generated.objectives || [];
     lesson.content = generated.content;
+
+    // Enrich with YouTube videos. searchVideos() degrades to [] on any
+    // failure or when no API key is set, so this never blocks generation.
+    lesson.videos = await searchVideos(`${course.title} ${lesson.title} tutorial`);
+
     lesson.isEnriched = true;
     await lesson.save();
 
