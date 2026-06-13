@@ -21,7 +21,7 @@ export default function Home() {
       const data = await res.json()
       if (data.error) throw new Error(data.error)
       navigate(`/course/${data._id}`)
-    } catch (err) {
+    } catch {
       setError('Failed to generate course. Try again.')
     } finally {
       setLoading(false)
