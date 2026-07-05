@@ -5,41 +5,49 @@ const Module = require('../models/Module');
 const Course = require('../models/Course');
 const { generateLesson } = require('../services/gemini');
 const { searchVideos } = require('../services/youtube');
+const { sendError, HttpError } = require('../utils/errors');
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req, res, next) => {
   try {
     const lesson = await Lesson.findById(req.params.id);
-    if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+    if (!lesson) return sendError(res, 404, 'not_found', 'Lesson not found');
     res.json(lesson);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch lesson' });
+    next(err);
   }
 });
 
-router.post('/:id/generate', async (req, res) => {
+router.post('/:id/generate', async (req, res, next) => {
   try {
     const lesson = await Lesson.findById(req.params.id);
-    if (!lesson) return res.status(404).json({ error: 'Lesson not found' });
+    if (!lesson) return sendError(res, 404, 'not_found', 'Lesson not found');
 
     const module = await Module.findById(lesson.module);
+    if (!module) return sendError(res, 404, 'not_found', "Lesson's module not found");
     const course = await Course.findById(module.course);
+    if (!course) return sendError(res, 404, 'not_found', "Lesson's course not found");
 
     const generated = await generateLesson(course.title, module.title, lesson.title);
 
     lesson.objectives = generated.objectives || [];
     lesson.content = generated.content;
 
-    // Enrich with YouTube videos. searchVideos() degrades to [] on any
-    // failure or when no API key is set, so this never blocks generation.
-    lesson.videos = await searchVideos(`${course.title} ${lesson.title} tutorial`);
+    // Enrich with YouTube videos. searchVideos() degrades to videos: [] on
+    // any failure or when no API key is set (Checkpoint 2), and reports
+    // *why* via enrichmentStatus so the caller can tell "no results" apart
+    // from "the API was unavailable" instead of both silently being [].
+    const { videos, enrichmentStatus } = await searchVideos(`${course.title} ${lesson.title} tutorial`);
+    lesson.videos = videos;
+    lesson.enrichmentStatus = enrichmentStatus;
 
     lesson.isEnriched = true;
     await lesson.save();
 
     res.json(lesson);
   } catch (err) {
+    if (err instanceof HttpError) return next(err);
     console.error(err);
-    res.status(500).json({ error: 'Failed to generate lesson content' });
+    sendError(res, 502, 'generation_failed', 'Failed to generate lesson content');
   }
 });
 
