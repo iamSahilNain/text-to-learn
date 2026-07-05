@@ -13,6 +13,13 @@ const lessonSchema = new mongoose.Schema({
   objectives: { type: [String], default: [] },
   content: { type: [mongoose.Schema.Types.Mixed], required: true },
   videos: { type: [videoSchema], default: [] },
+  // Distinguishes "no videos because YouTube genuinely had none" from "no
+  // videos because enrichment failed/quota ran out" -- see services/youtube.js.
+  enrichmentStatus: {
+    type: String,
+    enum: ['no_key', 'ok', 'no_results', 'unavailable'],
+    default: 'no_key',
+  },
   isEnriched: { type: Boolean, default: false },
   module: { type: mongoose.Schema.Types.ObjectId, ref: 'Module' }
 }, { timestamps: true });
