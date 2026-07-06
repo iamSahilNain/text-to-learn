@@ -3,7 +3,7 @@ const router = express.Router();
 const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Course = require('../models/Course');
-const { generateLesson } = require('../services/gemini');
+const { generateLessonSafe } = require('../services/gemini');
 const { searchVideos } = require('../services/youtube');
 const { sendError, HttpError } = require('../utils/errors');
 
@@ -27,7 +27,7 @@ router.post('/:id/generate', async (req, res, next) => {
     const course = await Course.findById(module.course);
     if (!course) return sendError(res, 404, 'not_found', "Lesson's course not found");
 
-    const generated = await generateLesson(course.title, module.title, lesson.title);
+    const generated = await generateLessonSafe(course.title, module.title, lesson.title);
 
     lesson.objectives = generated.objectives || [];
     lesson.content = generated.content;
