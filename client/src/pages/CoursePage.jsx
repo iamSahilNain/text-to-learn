@@ -9,10 +9,23 @@ export default function CoursePage() {
   const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
 
-  // Lazy-load the PDF module (jsPDF is heavy) only when the user exports.
+  // Prefer the server-side pdfkit export (streams a real download, no
+  // browser rendering needed). Fall back to the lazy-loaded client-side
+  // jsPDF export (src/pdf.js) if the server request fails for any reason.
   async function handleExport() {
     setExporting(true)
     try {
+      const res = await fetch(`${API_URL}/api/courses/${courseId}/pdf`)
+      if (!res.ok) throw new Error(`server export failed (${res.status})`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${(course.title || 'course').replace(/[^\w]+/g, '-').toLowerCase()}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Server PDF export failed, falling back to client-side export:', err)
       const { exportCourseToPdf } = await import('../pdf')
       exportCourseToPdf(course)
     } finally {

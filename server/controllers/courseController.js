@@ -3,6 +3,7 @@ const Course = require('../models/Course');
 const Module = require('../models/Module');
 const Lesson = require('../models/Lesson');
 const { generateCourseSafe } = require('../services/gemini');
+const { streamCoursePdf } = require('../services/pdf');
 const { sendError } = require('../utils/errors');
 
 const MAX_TOPIC_LENGTH = 200;
@@ -119,4 +120,15 @@ async function getCourse(req, res, next) {
   }
 }
 
-module.exports = { createCourse, getCourses, getCourse };
+async function exportCoursePdf(req, res, next) {
+  try {
+    const course = await Course.findById(req.params.id)
+      .populate({ path: 'modules', populate: { path: 'lessons' } });
+    if (!course) return sendError(res, 404, 'not_found', 'Course not found');
+    streamCoursePdf(course, res);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { createCourse, getCourses, getCourse, exportCoursePdf };
