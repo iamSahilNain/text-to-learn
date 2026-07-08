@@ -2,7 +2,8 @@ const mongoose = require('mongoose');
 const Course = require('../models/Course');
 const Module = require('../models/Module');
 const Lesson = require('../models/Lesson');
-const { generateCourseSafe } = require('../services/gemini');
+const { generateCourseSafe, generateLessonSafe } = require('../services/gemini');
+const { searchVideos } = require('../services/youtube');
 const { streamCoursePdf } = require('../services/pdf');
 const { sendError } = require('../utils/errors');
 
@@ -131,4 +132,70 @@ async function exportCoursePdf(req, res, next) {
   }
 }
 
-module.exports = { createCourse, getCourses, getCourse, exportCoursePdf };
+// ============================================================================
+// LEARNING CHECKPOINT #3 — Progressive, module-by-module generation.
+// Streams one `event: module` per module (each carrying its now-generated
+// lessons) over Server-Sent Events, instead of blocking on the whole course.
+// A mid-stream failure emits `event: error` but leaves whatever `module`
+// events already reached the client intact -- and closing the connection
+// (the client's Cancel / AbortController.abort()) is detected via `req.on
+// ('close')` and stops further generation work without an error.
+// ============================================================================
+async function generateCourseContent(req, res, next) {
+  let course;
+  try {
+    course = await Course.findById(req.params.id)
+      .populate({ path: 'modules', populate: { path: 'lessons' } });
+    if (!course) return sendError(res, 404, 'not_found', 'Course not found');
+  } catch (err) {
+    return next(err);
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+  res.flushHeaders?.();
+
+  let clientClosed = false;
+  req.on('close', () => { clientClosed = true; });
+
+  function sendEvent(event, data) {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+
+  try {
+    for (const mod of course.modules) {
+      if (clientClosed) break; // cancelled -- stop doing further generation work
+
+      for (const lesson of mod.lessons) {
+        if (clientClosed) break;
+        // Already generated (e.g. via the per-lesson button) -- don't redo it.
+        if (Array.isArray(lesson.content) && lesson.content.length > 0) continue;
+
+        const generated = await generateLessonSafe(course.title, mod.title, lesson.title);
+        lesson.objectives = generated.objectives || [];
+        lesson.content = generated.content;
+
+        const { videos, enrichmentStatus } = await searchVideos(`${course.title} ${lesson.title} tutorial`);
+        lesson.videos = videos;
+        lesson.enrichmentStatus = enrichmentStatus;
+        lesson.isEnriched = true;
+        await lesson.save();
+      }
+
+      if (!clientClosed) sendEvent('module', mod);
+    }
+
+    if (!clientClosed) sendEvent('done', { courseId: course._id });
+  } catch (err) {
+    console.error('[generateCourseContent]', err);
+    if (!clientClosed) sendEvent('error', { message: err.message || 'Generation failed' });
+  } finally {
+    res.end();
+  }
+}
+
+module.exports = { createCourse, getCourses, getCourse, exportCoursePdf, generateCourseContent };
