@@ -19,7 +19,7 @@ export default function Home() {
         body: JSON.stringify({ topic })
       })
       const data = await res.json()
-      if (data.error) throw new Error(data.error)
+      if (data.error) throw new Error(data.error.message || 'Generation failed')
       navigate(`/course/${data._id}`)
     } catch {
       setError('Failed to generate course. Try again.')
@@ -52,6 +52,12 @@ export default function Home() {
         </button>
         {error && <p className="text-red-400 mt-4 text-center">{error}</p>}
       </div>
+      <button
+        onClick={() => navigate('/courses')}
+        className="text-indigo-400 hover:text-indigo-300 mt-10 text-sm"
+      >
+        View my courses →
+      </button>
     </div>
   )
 }
