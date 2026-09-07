@@ -1,150 +1,204 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { API_URL } from '../api'
+import { API_URL, ApiError, fetchJson, invalidResponse, isValidCourse } from '../api'
+import { consumeCourseEvents } from '../sse'
 import { generationReducer, initialGenerationState } from '../generationReducer'
 
-// Parse one `event: ...\ndata: ...` SSE record (already split on the blank
-// line that separates records) into { event, data }.
-function parseSseEvent(raw) {
-  let event = 'message'
-  const dataLines = []
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim()
-    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
-  }
-  const dataStr = dataLines.join('\n')
-  if (!dataStr) return { event, data: null }
-  try {
-    return { event, data: JSON.parse(dataStr) }
-  } catch {
-    return { event, data: dataStr }
-  }
+// A module has no stored status. It is whatever its lessons say it is, and
+// an empty module is not a finished one.
+function moduleStatus(courseModule) {
+  const lessons = courseModule.lessons || []
+  if (lessons.length === 0) return 'empty'
+  if (lessons.some((lesson) => lesson.generationStatus === 'pending')) return 'pending'
+  if (lessons.some((lesson) => lesson.generationStatus === 'degraded')) return 'degraded'
+  return 'ready'
+}
+
+const LESSON_BADGE = {
+  pending: { text: 'Not generated', className: 'text-gray-500' },
+  ready: { text: 'Ready', className: 'text-green-400' },
+  degraded: { text: 'Fallback — retry available', className: 'text-amber-400' },
+}
+
+const MODULE_BADGE = {
+  pending: { text: 'Not generated', className: 'bg-gray-800 text-gray-400' },
+  ready: { text: 'Ready', className: 'bg-green-900 text-green-300' },
+  degraded: { text: 'Fallback', className: 'bg-amber-900 text-amber-200' },
 }
 
 export default function CoursePage() {
   const { courseId } = useParams()
   const navigate = useNavigate()
-  const [course, setCourse] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [state, dispatch] = useReducer(generationReducer, initialGenerationState)
   const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState('')
 
-  // LEARNING CHECKPOINT #3 — Progressive generation UX + frontend state.
-  // Replaces a single boolean with an explicit state machine (idle ->
-  // generating -> done, or error) that appends modules as they stream in
-  // over SSE instead of blocking on the whole course. `tokenRef` mirrors the
-  // reducer's own token bump on START/CANCEL so events dispatched from
-  // inside the async read loop below can be tagged with the generation they
-  // belong to -- the reducer drops anything tagged with a stale token, so a
-  // cancelled/superseded stream can never paint over the current view.
-  const [genState, dispatch] = useReducer(generationReducer, initialGenerationState)
-  const tokenRef = useRef(0)
-  const abortRef = useRef(null)
+  // The single allocator for generation tokens. Every dispatch from inside
+  // an async run carries the token it was started with.
+  const generationTokenRef = useRef(0)
+  const generationControllerRef = useRef(null)
+  const generationBusyRef = useRef(false)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+
+  const { course, loadStatus, loadError, generation } = state
 
   useEffect(() => {
-    fetch(`${API_URL}/api/courses/${courseId}`)
-      .then(r => r.json())
-      .then(data => { setCourse(data); setLoading(false) })
-      .catch(() => setLoading(false))
-    // Abort any in-flight generation stream if the user navigates away.
-    return () => abortRef.current?.abort()
-  }, [courseId])
-
-  async function handleGenerateFullCourse() {
-    tokenRef.current += 1
-    const token = tokenRef.current
-    dispatch({ type: 'START' })
-
     const controller = new AbortController()
-    abortRef.current = controller
+    let active = true
+
+    fetchJson(`/api/courses/${courseId}`, { signal: controller.signal })
+      .then((data) => {
+        if (!active) return
+        if (!isValidCourse(data)) throw invalidResponse('course')
+        dispatch({ type: 'LOAD_SUCCESS', course: data })
+      })
+      .catch((err) => {
+        if (!active || err?.name === 'AbortError') return
+        dispatch({ type: 'LOAD_FAILURE', status: err?.status, error: err?.message || 'Failed to load course.' })
+      })
+
+    return () => {
+      active = false
+      controller.abort()
+    }
+  }, [courseId, loadAttempt])
+
+  // Invalidate before aborting: no queued event can then reach the reducer.
+  useEffect(() => () => {
+    generationTokenRef.current += 1
+    generationControllerRef.current?.abort()
+  }, [])
+
+  const startGeneration = useCallback(async () => {
+    // Synchronous guard: a second click lands before React has re-rendered
+    // the disabled button.
+    if (generationBusyRef.current) return
+    generationBusyRef.current = true
+
+    generationTokenRef.current += 1
+    const token = generationTokenRef.current
+    const controller = new AbortController()
+    generationControllerRef.current = controller
+
+    const isCurrent = () => generationTokenRef.current === token && !controller.signal.aborted
+
+    dispatch({ type: 'START', token })
 
     try {
-      const res = await fetch(`${API_URL}/api/courses/${courseId}/generate-content`, {
+      const response = await fetch(`${API_URL}/api/courses/${courseId}/generate-content`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Ready lessons are reused; degraded and pending ones are retried.
+        body: JSON.stringify({ force: false }),
         signal: controller.signal,
       })
-      if (!res.ok || !res.body) throw new Error(`Generation failed to start (${res.status})`)
 
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        let sepIndex
-        while ((sepIndex = buffer.indexOf('\n\n')) !== -1) {
-          const rawEvent = buffer.slice(0, sepIndex)
-          buffer = buffer.slice(sepIndex + 2)
-          const { event, data } = parseSseEvent(rawEvent)
-
-          if (event === 'module') {
-            dispatch({ type: 'MODULE_RECEIVED', token, module: data })
-            // Render this module's freshly-generated lessons immediately,
-            // without waiting for the rest of the course.
-            setCourse(prev => prev && {
-              ...prev,
-              modules: prev.modules.map(m => (m._id === data._id ? data : m)),
-            })
-          } else if (event === 'done') {
-            dispatch({ type: 'DONE', token })
-          } else if (event === 'error') {
-            dispatch({ type: 'ERROR', token, error: data?.message || 'Generation failed' })
+      await consumeCourseEvents(response, {
+        isCurrent,
+        onModule: (courseModule) => dispatch({ type: 'MODULE_RECEIVED', token, module: courseModule }),
+        onDone: (summary) => {
+          const problem = summaryProblem(summary, courseId, course)
+          if (problem) {
+            dispatch({ type: 'ERROR', token, error: { code: 'invalid_response', message: problem, retriable: true } })
+            return
           }
-        }
-      }
+          dispatch({ type: 'DONE', token, summary })
+        },
+        onError: (payload) => dispatch({ type: 'ERROR', token, error: payload }),
+      })
     } catch (err) {
-      if (err.name !== 'AbortError') {
-        dispatch({ type: 'ERROR', token, error: err.message || 'Generation failed' })
+      if (err?.name !== 'AbortError' && isCurrent()) {
+        dispatch({
+          type: 'ERROR',
+          token,
+          error: {
+            code: err?.code || 'request_failed',
+            message: err?.message || 'Generation failed.',
+            retriable: err instanceof ApiError ? err.retriable : true,
+          },
+        })
+      }
+    } finally {
+      // An older run's cleanup must never clear a newer run's controller.
+      if (generationControllerRef.current === controller) {
+        generationControllerRef.current = null
+        generationBusyRef.current = false
       }
     }
-  }
+  }, [courseId, course])
 
   function handleCancel() {
-    abortRef.current?.abort()
-    tokenRef.current += 1
-    dispatch({ type: 'CANCEL' })
+    generationTokenRef.current += 1
+    dispatch({ type: 'CANCEL', token: generationTokenRef.current })
+    const controller = generationControllerRef.current
+    generationControllerRef.current = null
+    generationBusyRef.current = false
+    controller?.abort()
   }
 
-  // Prefer the server-side pdfkit export (streams a real download, no
-  // browser rendering needed). Fall back to the lazy-loaded client-side
-  // jsPDF export (src/pdf.js) if the server request fails for any reason.
+  function retryLoad() {
+    dispatch({ type: 'LOAD_START' })
+    setLoadAttempt((attempt) => attempt + 1)
+  }
+
   async function handleExport() {
+    if (!course) return
     setExporting(true)
+    setExportError('')
+    let objectUrl = null
     try {
-      const res = await fetch(`${API_URL}/api/courses/${courseId}/pdf`)
-      if (!res.ok) throw new Error(`server export failed (${res.status})`)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${(course.title || 'course').replace(/[^\w]+/g, '-').toLowerCase()}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      console.error('Server PDF export failed, falling back to client-side export:', err)
-      const { exportCourseToPdf } = await import('../pdf')
-      exportCourseToPdf(course)
+      const response = await fetch(`${API_URL}/api/courses/${courseId}/pdf`)
+      if (!response.ok) throw new Error(`server export failed (HTTP ${response.status})`)
+      const blob = await response.blob()
+      // An empty body or an error page is not a PDF, however it is labelled.
+      if (blob.size === 0 || !blob.type.includes('application/pdf')) {
+        throw new Error('server export returned something other than a PDF')
+      }
+      objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = `${(course.title || 'course').replace(/[^\w]+/g, '-').toLowerCase()}.pdf`
+      link.click()
+    } catch {
+      try {
+        const { exportCourseToPdf } = await import('../pdf')
+        exportCourseToPdf(course)
+      } catch {
+        setExportError('PDF export failed. Please try again.')
+      }
     } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
       setExporting(false)
     }
   }
 
-  if (loading) return (
-    <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-      <p className="text-gray-400 text-xl">Loading course...</p>
-    </div>
+  if (loadStatus === 'loading') return (
+    <Centered><p className="text-gray-400 text-xl">Loading course...</p></Centered>
   )
 
-  if (!course) return (
-    <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-      <p className="text-red-400 text-xl">Course not found</p>
-    </div>
+  if (loadStatus === 'not-found') return (
+    <Centered><p className="text-red-400 text-xl">Course not found</p></Centered>
   )
 
-  const generating = genState.status === 'generating'
-  const generatedIds = new Set(genState.modules.map(m => m._id))
+  if (loadStatus === 'error') return (
+    <Centered>
+      <div className="text-center">
+        <p role="alert" className="text-red-400 text-xl mb-6">{loadError}</p>
+        <button
+          onClick={retryLoad}
+          className="bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg px-4 py-2 transition"
+        >
+          Retry
+        </button>
+      </div>
+    </Centered>
+  )
+
+  const generating = generation.status === 'generating'
+  const lessons = course.modules.flatMap((courseModule) => courseModule.lessons)
+  const degradedCount = lessons.filter((lesson) => lesson.generationStatus === 'degraded').length
+  const pendingCount = lessons.filter((lesson) => lesson.generationStatus === 'pending').length
+  const startLabel = degradedCount > 0 && pendingCount === 0 ? 'Retry incomplete lessons' : 'Generate full course'
 
   return (
     <div className="min-h-screen bg-gray-950 text-white px-6 py-10 max-w-4xl mx-auto">
@@ -165,10 +219,10 @@ export default function CoursePage() {
             </button>
           ) : (
             <button
-              onClick={handleGenerateFullCourse}
+              onClick={startGeneration}
               className="bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg px-4 py-2 transition"
             >
-              Generate full course
+              {startLabel}
             </button>
           )}
           <button
@@ -181,27 +235,59 @@ export default function CoursePage() {
         </div>
       </div>
 
-      {genState.status !== 'idle' && (
+      {exportError && <p role="alert" className="text-red-400 mb-6 text-sm">{exportError}</p>}
+
+      {course.outlineStatus === 'degraded' && (
+        <div className="bg-amber-950 border border-amber-900 text-amber-200 rounded-xl p-4 mb-6 text-sm">
+          This course outline is fallback content. Generating lessons will not replace it — create a new
+          course to try the outline again.
+        </div>
+      )}
+
+      {generation.status !== 'idle' && (
         <div className="bg-gray-900 rounded-xl p-4 mb-8 text-sm">
           {generating && (
             <p className="text-indigo-300">
-              Generating module {genState.modules.length + 1} of {course.modules?.length ?? '?'}…
+              Processed {generation.receivedModuleIds.length} of {course.modules.length} modules…
             </p>
           )}
-          {genState.status === 'done' && (
-            <p className="text-green-400">All {genState.modules.length} module(s) generated.</p>
+          {generation.status === 'complete' && (
+            <p className="text-green-400">All {generation.summary.totalLessons} lessons are ready.</p>
           )}
-          {genState.status === 'error' && (
+          {generation.status === 'degraded' && (
             <div className="flex items-center justify-between gap-4">
-              <p className="text-red-400">
-                Generation stopped: {genState.error}. {genState.modules.length} module(s) were saved before the failure.
+              <p className="text-amber-300">
+                {generation.summary.readyLessons} of {generation.summary.totalLessons} lessons are ready.{' '}
+                {generation.summary.degradedLessons} lessons contain fallback content.
               </p>
               <button
-                onClick={handleGenerateFullCourse}
+                onClick={startGeneration}
                 className="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg px-3 py-1.5 transition whitespace-nowrap"
               >
-                Retry
+                Retry incomplete lessons
               </button>
+            </div>
+          )}
+          {generation.status === 'error' && (
+            <div className="flex items-center justify-between gap-4">
+              <p role="alert" className="text-red-400">
+                Generation stopped: {generation.error.message}
+              </p>
+              {generation.error.retriable ? (
+                <button
+                  onClick={startGeneration}
+                  className="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                >
+                  Retry
+                </button>
+              ) : (
+                <button
+                  onClick={() => navigate('/courses')}
+                  className="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                >
+                  Back to my courses
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -210,36 +296,63 @@ export default function CoursePage() {
       <h1 className="text-4xl font-bold mb-3">{course.title}</h1>
       <p className="text-gray-400 mb-4">{course.description}</p>
       <div className="flex gap-2 mb-10 flex-wrap">
-        {course.tags?.map(tag => (
+        {course.tags?.map((tag) => (
           <span key={tag} className="bg-indigo-900 text-indigo-200 px-3 py-1 rounded-full text-sm">
             {tag}
           </span>
         ))}
       </div>
       <div className="space-y-6">
-        {course.modules?.map((mod, mi) => (
-          <div key={mod._id} className="bg-gray-900 rounded-2xl p-6">
-            <h2 className="text-xl font-semibold mb-4 text-indigo-300 flex items-center gap-2">
-              Module {mi + 1}: {mod.title}
-              {generatedIds.has(mod._id) && (
-                <span className="text-xs bg-green-900 text-green-300 rounded-full px-2 py-0.5">generated</span>
-              )}
-            </h2>
-            <div className="space-y-2">
-              {mod.lessons?.map((lesson, li) => (
-                <button
-                  key={lesson._id}
-                  onClick={() => navigate(`/lesson/${lesson._id}`)}
-                  className="w-full text-left bg-gray-800 hover:bg-gray-700 rounded-xl px-4 py-3 text-gray-200 transition flex items-center justify-between"
-                >
-                  <span>{li + 1}. {lesson.title}</span>
-                  {lesson.content?.length > 0 && <span className="text-green-400 text-xs">✓ generated</span>}
-                </button>
-              ))}
+        {course.modules.map((courseModule, moduleIndex) => {
+          const badge = MODULE_BADGE[moduleStatus(courseModule)]
+          return (
+            <div key={courseModule._id} className="bg-gray-900 rounded-2xl p-6">
+              <h2 className="text-xl font-semibold mb-4 text-indigo-300 flex items-center gap-2">
+                Module {moduleIndex + 1}: {courseModule.title}
+                {badge && (
+                  <span className={`text-xs rounded-full px-2 py-0.5 ${badge.className}`}>{badge.text}</span>
+                )}
+              </h2>
+              <div className="space-y-2">
+                {courseModule.lessons.map((lesson, lessonIndex) => {
+                  const lessonBadge = LESSON_BADGE[lesson.generationStatus]
+                  return (
+                    <button
+                      key={lesson._id}
+                      onClick={() => navigate(`/lesson/${lesson._id}`)}
+                      className="w-full text-left bg-gray-800 hover:bg-gray-700 rounded-xl px-4 py-3 text-gray-200 transition flex items-center justify-between"
+                    >
+                      <span>{lessonIndex + 1}. {lesson.title}</span>
+                      <span className={`text-xs ${lessonBadge.className}`}>{lessonBadge.text}</span>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
+    </div>
+  )
+}
+
+// A completion record has to describe the course actually on screen.
+function summaryProblem(summary, courseId, course) {
+  if (summary.courseId !== courseId) return 'The server reported a different course.'
+  const { readyLessons, degradedLessons, totalLessons } = summary
+  if (readyLessons < 0 || degradedLessons < 0 || totalLessons < 0) return 'The server reported impossible counts.'
+  if (readyLessons + degradedLessons !== totalLessons) return 'The server reported inconsistent counts.'
+  if (summary.status === 'complete' && degradedLessons !== 0) return 'The server reported inconsistent counts.'
+  if (summary.status === 'degraded' && degradedLessons === 0) return 'The server reported inconsistent counts.'
+  const expected = course ? course.modules.reduce((total, entry) => total + entry.lessons.length, 0) : totalLessons
+  if (totalLessons !== expected) return 'The server reported a different lesson count.'
+  return null
+}
+
+function Centered({ children }) {
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+      {children}
     </div>
   )
 }
