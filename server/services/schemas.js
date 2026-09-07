@@ -1,13 +1,8 @@
 'use strict';
 
-// ============================================================================
-// LEARNING CHECKPOINT #1 — LLM structured-output contract
-// ----------------------------------------------------------------------------
-// Single source of truth for what a valid course / lesson looks like. Used
-// both to validate Gemini's output (defense in depth) and, for the course
-// shape, fed to Gemini's `responseSchema` for constrained decoding
-// (prevention). See LEARNING.md (Checkpoint 1).
-// ============================================================================
+// The single source of truth for what a valid course and lesson look like.
+// Used to validate model output, and -- for the course shape only -- fed to
+// Gemini's responseSchema for constrained decoding.
 
 const { z } = require('zod');
 

@@ -1,37 +1,15 @@
 'use strict';
 
-// ============================================================================
-// LEARNING CHECKPOINT #1 — LLM structured-output contract & repair
-// ----------------------------------------------------------------------------
-// Activated: services/gemini.js now validates every Gemini response against
-// a Zod schema (services/schemas.js), issues exactly one repair re-prompt on
-// failure, and falls back to a minimal, valid, labelled course rather than
-// throwing. These tests exercise that contract with an injected `modelCall`
-// so they run with zero network access.
-// ============================================================================
+// Model output handling: validate, repair once, then fall back -- and the
+// transport policy underneath it. Schema rules themselves live in
+// schemas.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert');
 
 const { validateCourse, generateCourseSafe } = require('../../services/gemini');
 
-test('validateCourse rejects an object missing required fields', () => {
-  // A course with no title / no modules must be rejected by the schema
-  // validator BEFORE it ever reaches Mongo.
-  const result = validateCourse({ description: 'x' });
-  assert.equal(result.ok, false);
-});
-
-test('validateCourse rejects modules that contain zero lessons', () => {
-  // The contract says each module has 3-6 lessons. Empty modules are invalid.
-  const result = validateCourse({
-    title: 'Intro to Testing',
-    modules: [{ title: 'Module 1', lessons: [] }],
-  });
-  assert.equal(result.ok, false);
-});
-
-test('generateCourseSafe repairs a single malformed JSON response', async () => {
+test('one malformed response is repaired by a single re-prompt', async () => {
   let calls = 0;
   const validCourse = {
     title: 'Intro to Testing',
@@ -54,7 +32,7 @@ test('generateCourseSafe repairs a single malformed JSON response', async () => 
   assert.equal(outlineStatus, 'ready', 'repaired model output is real content, not a fallback');
 });
 
-test('generateCourseSafe returns a safe fallback when repair also fails', async () => {
+test('two invalid responses produce a labelled degraded outline', async () => {
   let calls = 0;
   // Garbage on both the original call and the repair attempt.
   const modelCall = async () => {
@@ -69,7 +47,7 @@ test('generateCourseSafe returns a safe fallback when repair also fails', async 
   assert.equal(outlineStatus, 'degraded', 'a fallback outline must be labelled degraded');
 });
 
-test('generateCourseSafe never leaks a raw JSON.parse SyntaxError', async () => {
+test('a parser error never reaches the caller', async () => {
   // The caller (courseController) should only ever see either a valid course
   // object or a typed, intentional error — never a raw parser exception.
   const modelCall = async () => '{{{ garbage';

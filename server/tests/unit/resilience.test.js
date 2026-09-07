@@ -1,13 +1,8 @@
 'use strict';
 
-// ============================================================================
-// LEARNING CHECKPOINT #2 — External-API resilience (Gemini + YouTube)
-// ----------------------------------------------------------------------------
-// Activated: services/resilience.js wraps both external calls with a
-// timeout, retry + exponential backoff + jitter, and a 429-vs-5xx policy
-// split. These tests exercise the reusable wrapper directly (with fake,
-// no-network calls) plus the YouTube degradation path end to end.
-// ============================================================================
+// The shared retry/timeout/cancellation wrapper, and the optional YouTube
+// enrichment stage built on it. Every external call is faked; nothing here
+// touches the network.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -107,7 +102,10 @@ test('the call gives up after a max attempt count with a typed error', async () 
   assert.equal(attempts, 4, 'should stop after exactly maxAttempts tries');
 });
 
-test('lesson generation succeeds even when YouTube enrichment fails', async () => {
+// This test says only what it checks: a failed YouTube search resolves to
+// unavailable rather than throwing. That lesson persistence actually
+// survives it is proved at the route boundary, in tests/integration.
+test('a failed YouTube search reports unavailable instead of throwing', async () => {
   const originalFetch = global.fetch;
   const originalKey = process.env.YOUTUBE_API_KEY;
   process.env.YOUTUBE_API_KEY = 'fake-key-for-test';

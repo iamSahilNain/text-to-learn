@@ -11,12 +11,12 @@ const MODEL_STAGE_TOTAL_MS = 25_000;
 const MODEL_ATTEMPT_TIMEOUT_MS = 10_000;
 const MODEL_MAX_ATTEMPTS = 3;
 
-// The model id is configurable so you can swap it without touching code.
-// If your key doesn't have access to this model, set GEMINI_MODEL in .env.
+// Configurable so a key without access to the default model can use another
+// one without a code change.
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
-// Lazily construct the client so a missing key only fails when generation is
-// actually attempted (not at server boot), and the error message is clear.
+// Constructed lazily, so importing this module has no configuration
+// requirement of its own.
 let client = null;
 function requireApiKey() {
   if (!process.env.GEMINI_API_KEY) {
@@ -176,13 +176,10 @@ function fallbackLesson(lessonTitle) {
   };
 }
 
-// ============================================================================
-// LEARNING CHECKPOINT #1 — LLM structured-output contract & repair.
-// Public API: call -> validate -> (on failure) repair once -> (on failure)
-// safe fallback. Never leaks a raw JSON.parse SyntaxError or a Zod error to
-// the caller (courseController / lessonRoutes) -- they only ever see a
-// valid object.
-// ============================================================================
+// Public API: call -> validate -> repair once -> safe fallback. A parser or
+// schema failure never reaches a caller as an exception; a transport,
+// configuration or cancellation failure always does. The distinction is the
+// point: invalid model output is recoverable, a dead provider is not.
 
 // Returns { value, outlineStatus }. A transport or configuration failure
 // propagates as a typed error -- only invalid model output twice in a row
@@ -238,7 +235,7 @@ module.exports = {
   MODEL_STAGE_TOTAL_MS,
   MODEL_ATTEMPT_TIMEOUT_MS,
   MODEL_MAX_ATTEMPTS,
-  // Exported for the checkpoint 1 unit tests (pure, no network):
+  // Re-exported for callers that validate without generating:
   validateCourse,
   validateLesson,
 };

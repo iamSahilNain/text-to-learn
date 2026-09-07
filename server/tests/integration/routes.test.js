@@ -190,6 +190,36 @@ test('POST /api/lessons/:id/generate rejects malformed generation options', asyn
   });
 });
 
+test('a lesson is persisted and returned even when YouTube is unavailable', async () => {
+  const lesson = lessonDocument();
+  const overrides = {
+    models: fakeModels({
+      lesson,
+      courseModule: { _id: 'module-1', title: 'Basics', course: 'course-1' },
+      course: { _id: 'course-1', title: 'Rust' },
+    }),
+    generateLessonSafe: async () => ({
+      value: { title: 'Ownership', objectives: ['Learn it'], content: [{ type: 'paragraph', text: 'Body.' }] },
+      generationStatus: 'ready',
+    }),
+    searchVideos: async () => ({ videos: [], enrichmentStatus: 'unavailable' }),
+  };
+
+  await withServer(overrides, async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/lessons/lesson-1/generate`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+
+    // Enrichment is optional: its failure is recorded, and the lesson is
+    // still written and still ready.
+    assert.equal(body.generationStatus, 'ready');
+    assert.equal(body.enrichmentStatus, 'unavailable');
+    assert.deepEqual(body.videos, []);
+    assert.deepEqual(body.content, [{ type: 'paragraph', text: 'Body.' }]);
+    assert.equal(lesson.saves, 1);
+  });
+});
+
 test('the bulk stream and the single-lesson route persist identical fields', async () => {
   const generation = {
     value: { title: 'Ownership', objectives: ['Learn it'], content: [{ type: 'paragraph', text: 'Body.' }] },
