@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: nothing here writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server-checks:
+    name: server-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Pin npm
+        run: npm install -g npm@11.6.2
+
+      - name: Install server dependencies
+        run: npm --prefix server ci
+
+      - name: Unit tests
+        run: npm --prefix server test
+
+      - name: Start MongoDB
+        run: docker compose up -d mongo
+
+      - name: Wait for mongod
+        run: |
+          deadline=$((SECONDS + 60))
+          until docker compose exec -T mongo mongosh --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; do
+            if [ $SECONDS -ge $deadline ]; then
+              echo "mongod did not become reachable within 60s" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Initialise the replica set
+        run: |
+          docker compose exec -T mongo mongosh --quiet --eval 'try { rs.status() } catch (error) { if (error.code === 94) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) } else { throw error } }'
+
+      - name: Wait for a writable primary
+        run: |
+          deadline=$((SECONDS + 60))
+          until [ "$(docker compose exec -T mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | tr -d '\r\n ')" = "true" ]; do
+            if [ $SECONDS -ge $deadline ]; then
+              echo "no writable primary within 60s" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Integration tests
+        # Fake providers only. No production keys are available to this job,
+        # and no request leaves the runner.
+        env:
+          MONGO_URI_TEST: mongodb://127.0.0.1:27017/text_to_learn_test?replicaSet=rs0&directConnection=true
+        run: npm --prefix server run test:integration
+
+      - name: Stop MongoDB
+        if: always()
+        run: docker compose down
+
+  client-checks:
+    name: client-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Pin npm
+        run: npm install -g npm@11.6.2
+
+      - name: Install client dependencies
+        run: npm --prefix client ci
+
+      - name: Component tests
+        run: npm --prefix client test
+
+      - name: Lint
+        run: npm --prefix client run lint
+
+      - name: Build
+        run: npm --prefix client run build
+
+  repo-checks:
+    name: repo-checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up Node
+        # actions/setup-node v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+
+      - name: Whitespace errors
+        run: git diff --check
+
+      - name: Repository hygiene
+        run: node scripts/check-docs.mjs
