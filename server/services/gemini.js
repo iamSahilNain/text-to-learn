@@ -2,7 +2,14 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { validateCourse, validateLesson, COURSE_RESPONSE_SCHEMA } = require('./schemas');
-const { withResilience } = require('./resilience');
+const { withResilience, deadlineIn, throwIfSettled } = require('./resilience');
+const { ConfigurationError } = require('../utils/errors');
+
+// The whole model stage -- first call, its retries, and the one repair round
+// -- shares this budget. The repair does not get a fresh 25 seconds.
+const MODEL_STAGE_TOTAL_MS = 25_000;
+const MODEL_ATTEMPT_TIMEOUT_MS = 10_000;
+const MODEL_MAX_ATTEMPTS = 3;
 
 // The model id is configurable so you can swap it without touching code.
 // If your key doesn't have access to this model, set GEMINI_MODEL in .env.
@@ -11,10 +18,16 @@ const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 // Lazily construct the client so a missing key only fails when generation is
 // actually attempted (not at server boot), and the error message is clear.
 let client = null;
-function getModel({ responseSchema } = {}) {
+function requireApiKey() {
   if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY is not set — add it to server/.env');
+    // Checked before any attempt starts: a missing key is a configuration
+    // problem, not something a retry can fix.
+    throw new ConfigurationError('GEMINI_API_KEY is not set');
   }
+}
+
+function getModel({ responseSchema } = {}) {
+  requireApiKey();
   if (!client) {
     client = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   }
@@ -33,21 +46,23 @@ function getModel({ responseSchema } = {}) {
   });
 }
 
-// ============================================================================
-// LEARNING CHECKPOINT #2 — External-API resilience.
-// One real attempt at calling the model, wrapped with a timeout + retry +
-// backoff + 429-vs-5xx policy (services/resilience.js). This is the
-// `modelCall` generateCourseSafe/generateLessonSafe use by default; tests
-// inject a fake in its place so they run with zero network access.
-// ============================================================================
-async function callModel(prompt, { responseSchema } = {}) {
+// The default modelCall. Cancellation and the stage deadline come from the
+// caller; tests inject a fake with the same (prompt, options) contract so
+// they run with no network access.
+async function callModel(prompt, { signal, deadlineAt, responseSchema } = {}) {
+  requireApiKey();
   return withResilience(
-    async (signal) => {
+    async (attemptSignal) => {
       const model = getModel({ responseSchema });
-      const result = await model.generateContent(prompt, { signal });
+      const result = await model.generateContent(prompt, { signal: attemptSignal });
       return result.response.text();
     },
-    { timeoutMs: 20_000, maxAttempts: 3 }
+    {
+      timeoutMs: MODEL_ATTEMPT_TIMEOUT_MS,
+      maxAttempts: MODEL_MAX_ATTEMPTS,
+      signal,
+      deadlineAt,
+    }
   );
 }
 
@@ -172,15 +187,22 @@ function fallbackLesson(lessonTitle) {
 // Returns { value, outlineStatus }. A transport or configuration failure
 // propagates as a typed error -- only invalid model output twice in a row
 // produces the labelled fallback outline.
-async function generateCourseSafe(topic, { modelCall } = {}) {
+async function generateCourseSafe(topic, { modelCall, signal, deadlineAt } = {}) {
   const call = modelCall || ((prompt, options) => callModel(prompt, { ...options, responseSchema: COURSE_RESPONSE_SCHEMA }));
   const prompt = buildCoursePrompt(topic);
+  // Created once, here: both rounds share it.
+  const stage = { signal, deadlineAt: deadlineIn(MODEL_STAGE_TOTAL_MS, deadlineAt) };
+  throwIfSettled(stage.signal, stage.deadlineAt);
 
-  const first = await callAndValidate(prompt, call, validateCourse);
+  const first = await callAndValidate(prompt, call, validateCourse, stage);
   if (first.ok) return { value: first.value, outlineStatus: 'ready' };
 
+  // A cancelled or exhausted stage never starts the repair round, and never
+  // turns into a fallback: the fallback is for invalid model output alone.
+  throwIfSettled(stage.signal, stage.deadlineAt);
+
   const repairPrompt = buildRepairPrompt(prompt, first.raw ?? '', first.errors);
-  const repaired = await callAndValidate(repairPrompt, call, validateCourse);
+  const repaired = await callAndValidate(repairPrompt, call, validateCourse, stage);
   if (repaired.ok) return { value: repaired.value, outlineStatus: 'ready' };
 
   console.error('[gemini] course outline failed validation twice; using the fallback outline.');
@@ -189,15 +211,21 @@ async function generateCourseSafe(topic, { modelCall } = {}) {
 
 // Returns { value, generationStatus }, using the same rule: ready for
 // validated model output, degraded only for the local fallback body.
-async function generateLessonSafe(courseTitle, moduleTitle, lessonTitle, { modelCall } = {}) {
+async function generateLessonSafe(courseTitle, moduleTitle, lessonTitle, { modelCall, signal, deadlineAt } = {}) {
   const call = modelCall || ((prompt, options) => callModel(prompt, options));
   const prompt = buildLessonPrompt(courseTitle, moduleTitle, lessonTitle);
+  const stage = { signal, deadlineAt: deadlineIn(MODEL_STAGE_TOTAL_MS, deadlineAt) };
+  throwIfSettled(stage.signal, stage.deadlineAt);
 
-  const first = await callAndValidate(prompt, call, validateLesson);
+  const first = await callAndValidate(prompt, call, validateLesson, stage);
   if (first.ok) return { value: first.value, generationStatus: 'ready' };
 
+  // A cancelled or exhausted stage never starts the repair round, and never
+  // turns into a fallback: the fallback is for invalid model output alone.
+  throwIfSettled(stage.signal, stage.deadlineAt);
+
   const repairPrompt = buildRepairPrompt(prompt, first.raw ?? '', first.errors);
-  const repaired = await callAndValidate(repairPrompt, call, validateLesson);
+  const repaired = await callAndValidate(repairPrompt, call, validateLesson, stage);
   if (repaired.ok) return { value: repaired.value, generationStatus: 'ready' };
 
   console.error('[gemini] lesson content failed validation twice; using the fallback lesson.');
@@ -207,6 +235,9 @@ async function generateLessonSafe(courseTitle, moduleTitle, lessonTitle, { model
 module.exports = {
   generateCourseSafe,
   generateLessonSafe,
+  MODEL_STAGE_TOTAL_MS,
+  MODEL_ATTEMPT_TIMEOUT_MS,
+  MODEL_MAX_ATTEMPTS,
   // Exported for the checkpoint 1 unit tests (pure, no network):
   validateCourse,
   validateLesson,

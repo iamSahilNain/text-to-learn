@@ -7,6 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const { startTestServer } = require('./helpers/server');
+const { queryReturning } = require('./helpers/fakes');
 
 function lessonDocument(overrides = {}) {
   return {
@@ -221,9 +222,7 @@ test('the bulk stream and the single-lesson route persist identical fields', asy
     ...providers,
     models: {
       ...fakeModels({}),
-      Course: {
-        findById: () => ({ populate: async () => course }),
-      },
+      Course: { findById: () => queryReturning(course) },
     },
   }, async ({ baseUrl }) => {
     const response = await fetch(`${baseUrl}/api/courses/course-1/generate-content`, { method: 'POST' });
@@ -252,7 +251,7 @@ test('the bulk stream emits a module per module and a counted done event', async
 
   let modelCalls = 0;
   const overrides = {
-    models: { ...fakeModels({}), Course: { findById: () => ({ populate: async () => course }) } },
+    models: { ...fakeModels({}), Course: { findById: () => queryReturning(course) } },
     generateLessonSafe: async () => {
       modelCalls += 1;
       return {

@@ -2,10 +2,17 @@ const express = require('express');
 const { sendError } = require('../utils/errors');
 const { serializeLesson } = require('../services/generationStatus');
 const { parseGenerationOptions } = require('../controllers/courseController');
+const { createRequestContext } = require('../services/requestContext');
+const { LESSON_OPERATION_TOTAL_MS } = require('../services/lessonGeneration');
 
-function createLessonRouter({ models, lessonGenerator }) {
+// One lesson request: generation, enrichment and the checks around its
+// single write.
+const LESSON_REQUEST_TOTAL_MS = LESSON_OPERATION_TOTAL_MS;
+
+function createLessonRouter({ models, lessonGenerator, timeouts = {} }) {
   const router = express.Router();
   const { Lesson, Module, Course } = models;
+  const lessonTimeoutMs = timeouts.lessonMs ?? LESSON_REQUEST_TOTAL_MS;
 
   router.get('/:id', async (req, res, next) => {
     try {
@@ -18,6 +25,9 @@ function createLessonRouter({ models, lessonGenerator }) {
   });
 
   router.post('/:id/generate', async (req, res, next) => {
+    // Registered before the lookup, so a client that leaves mid-request
+    // stops the generation rather than paying for it.
+    const context = createRequestContext(req, res, { timeoutMs: lessonTimeoutMs });
     try {
       const options = parseGenerationOptions(req.body);
 
@@ -36,11 +46,16 @@ function createLessonRouter({ models, lessonGenerator }) {
         courseTitle: course.title,
         moduleTitle: courseModule.title,
         force: options.force,
+        signal: context.signal,
+        deadlineAt: context.deadlineAt,
       });
 
+      context.complete();
       res.json(serializeLesson(saved));
     } catch (err) {
       next(err);
+    } finally {
+      context.dispose();
     }
   });
 

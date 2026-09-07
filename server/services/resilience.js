@@ -1,17 +1,43 @@
 'use strict';
 
-// ============================================================================
-// LEARNING CHECKPOINT #2 — External-API resilience (Gemini + YouTube)
-// ----------------------------------------------------------------------------
-// A reusable wrapper for any async external call: timeout (AbortController),
-// retry with exponential backoff + full jitter, and a 429/quota-vs-5xx
-// policy split. See LEARNING.md (Checkpoint 2) and
-// server/tests/checkpoint2.resilience.test.js for the behaviour this builds.
-// ============================================================================
+// Retry, timeout and cancellation for external calls.
+//
+// Every caller shares this wrapper: there is no second retry implementation
+// anywhere in the server. Callers supply an external abort signal and an
+// absolute monotonic deadline; both are re-checked at entry, before each
+// attempt, and on both sides of every backoff sleep.
 
-// A single typed error the caller always gets instead of a raw fetch
-// rejection / AbortError / SDK exception, so callers can branch on `.status`
-// and `.retriable` instead of parsing messages.
+const { performance } = require('node:perf_hooks');
+
+// The caller cancelled -- a client disconnect, or a parent operation giving
+// up. This always wins over retry classification.
+class OperationAbortedError extends Error {
+  constructor(message = 'Operation was aborted') {
+    super(message);
+    this.name = 'OperationAbortedError';
+    this.code = 'operation_aborted';
+  }
+}
+
+// The operation's own budget ran out.
+class GenerationTimeoutError extends Error {
+  constructor(message = 'Operation exceeded its time budget') {
+    super(message);
+    this.name = 'GenerationTimeoutError';
+    this.code = 'generation_timeout';
+  }
+}
+
+// One attempt exceeded its slice. Retryable while the parent budget is live.
+class AttemptTimeoutError extends Error {
+  constructor(ms) {
+    super(`Attempt timed out after ${ms}ms`);
+    this.name = 'AttemptTimeoutError';
+    this.retriable = true;
+  }
+}
+
+// The typed error callers branch on instead of parsing SDK messages.
 class UpstreamError extends Error {
   constructor(message, { status, retriable = false, attempts, cause } = {}) {
     super(message);
@@ -23,44 +49,117 @@ class UpstreamError extends Error {
   }
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function monotonicNow() {
+  return performance.now();
 }
 
-// Exponential backoff with "full jitter" (AWS's canonical formula): the
-// delay is a random value between 0 and min(cap, base * 2^attempt). Growth
-// spreads retries out over time; the randomness stops many clients that
-// failed together from retrying in lockstep (a "retry storm").
+// An absolute monotonic deadline `totalMs` from now, never later than the
+// parent's own deadline.
+function deadlineIn(totalMs, parentDeadlineAt) {
+  const own = monotonicNow() + totalMs;
+  return parentDeadlineAt === undefined ? own : Math.min(own, parentDeadlineAt);
+}
+
+function remainingMs(deadlineAt) {
+  return deadlineAt === undefined ? Infinity : deadlineAt - monotonicNow();
+}
+
+function throwIfSettled(signal, deadlineAt) {
+  if (signal?.aborted) throw new OperationAbortedError();
+  if (remainingMs(deadlineAt) <= 0) throw new GenerationTimeoutError();
+}
+
+// Abortable delay. Existing callers that pass only a duration keep working.
+function sleep(ms, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new OperationAbortedError());
+      return;
+    }
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    function onAbort() {
+      cleanup();
+      reject(new OperationAbortedError());
+    }
+    function cleanup() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+// Exponential backoff with full jitter: a random delay in [0, min(cap,
+// base * 2^attempt)). The randomness keeps clients that failed together
+// from retrying in lockstep.
 function backoffDelay(attempt, { baseMs = 300, capMs = 8_000 } = {}) {
   const exp = Math.min(capMs, baseMs * 2 ** attempt);
   return Math.random() * exp;
 }
 
-// A transient network error or 5xx *wants* a retry. A non-429 4xx (bad
-// request, auth failure, etc.) does not -- retrying it just repeats the same
-// failure. 429 is retriable but handled with its own, much longer backoff
-// below (see `withResilience`), since hammering a quota-exhausted API is the
-// worst possible response to a 429.
+// A non-429 4xx will fail the same way on a second attempt. 429 gets its own
+// much longer delay in the loop below, because hammering a rate-limited API
+// is the worst available response to a 429.
 function defaultIsRetriable(err) {
-  if (err.name === 'AbortError' || /timeout/i.test(err.message || '')) return true;
-  if (typeof err.status === 'number') {
+  if (err?.retriable === true) return true;
+  if (err?.name === 'AbortError') return true;
+  if (typeof err?.status === 'number') {
     if (err.status === 429) return true;
-    if (err.status >= 500) return true;
-    return false;
+    return err.status >= 500;
   }
-  // No status at all -- e.g. a network-level failure -- treat as transient.
+  // No status at all -- a network-level failure -- is treated as transient.
   return true;
 }
 
+// Runs one attempt under a signal combining external cancellation, the
+// overall deadline and this attempt's own slice.
+async function runAttempt(fn, attemptIndex, { signal, deadlineAt, timeoutMs }) {
+  const controller = new AbortController();
+  const budgetMs = remainingMs(deadlineAt);
+  const attemptMs = Math.min(timeoutMs, budgetMs);
+  let cause = budgetMs < timeoutMs ? 'deadline' : 'attempt';
+
+  const timer = setTimeout(() => controller.abort(), attemptMs);
+  function onExternalAbort() {
+    cause = 'external';
+    controller.abort();
+  }
+  signal?.addEventListener('abort', onExternalAbort, { once: true });
+
+  const aborted = new Promise((_resolve, reject) => {
+    controller.signal.addEventListener('abort', () => {
+      if (cause === 'external') reject(new OperationAbortedError());
+      else if (cause === 'deadline') reject(new GenerationTimeoutError());
+      else reject(new AttemptTimeoutError(Math.round(attemptMs)));
+    }, { once: true });
+  });
+
+  // Bounded race: an uncooperative callback that ignores its signal cannot
+  // hang the wrapper, and its late rejection is always consumed.
+  const work = Promise.resolve().then(() => fn(controller.signal, attemptIndex));
+  work.catch(() => {});
+
+  try {
+    return await Promise.race([work, aborted]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
 /**
- * Run `fn(signal)` with a timeout, retrying transient failures with backoff
- * + jitter, up to `maxAttempts` total attempts. Throws one `UpstreamError` if
- * every attempt fails; never lets a raw fetch/SDK exception escape.
+ * Run `fn(attemptSignal, attemptIndex)` with per-attempt timeouts, retrying
+ * transient failures with backoff and jitter inside the supplied budget.
  *
- * `fn` should throw an error carrying `.status` (HTTP status code) and,
- * optionally, `.retryAfterMs` (parsed from a `Retry-After` header) so this
- * wrapper can apply the 429-vs-5xx policy split. Errors with no `.status`
- * (network failures) are treated as transient.
+ * Throws OperationAbortedError on external cancellation, GenerationTimeoutError
+ * when the deadline wins, and a single UpstreamError when every attempt
+ * failed. Never lets a raw SDK or fetch exception escape.
+ *
+ * `fn` should throw errors carrying `.status`, and optionally `.retryAfterMs`
+ * parsed from a Retry-After header, so the 429-versus-5xx split applies.
  */
 async function withResilience(fn, opts = {}) {
   const {
@@ -71,39 +170,61 @@ async function withResilience(fn, opts = {}) {
     quotaBaseMs = baseMs * 6,
     quotaCapMs = capMs * 6,
     isRetriable = defaultIsRetriable,
+    signal,
+    deadlineAt,
   } = opts;
+
+  // An already-cancelled or already-expired call must not start paid work.
+  throwIfSettled(signal, deadlineAt);
 
   let lastErr;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs);
+    throwIfSettled(signal, deadlineAt);
     try {
-      const result = await fn(controller.signal, attempt);
-      clearTimeout(timer);
-      return result;
+      return await runAttempt(fn, attempt, { signal, deadlineAt, timeoutMs });
     } catch (err) {
-      clearTimeout(timer);
+      if (err instanceof OperationAbortedError || err instanceof GenerationTimeoutError) throw err;
+      // A callback that surfaced the cancellation as its own error still
+      // means cancellation, not a retryable upstream failure.
+      if (signal?.aborted) throw new OperationAbortedError();
+
       lastErr = err;
       const attemptsMade = attempt + 1;
-      const isLastAttempt = attemptsMade >= maxAttempts;
-
-      if (isLastAttempt || !isRetriable(err)) {
+      const retriable = isRetriable(err);
+      if (attemptsMade >= maxAttempts || !retriable) {
         throw new UpstreamError(
           `Upstream call failed after ${attemptsMade} attempt(s): ${err.message}`,
-          { status: err.status, retriable: isRetriable(err), attempts: attemptsMade, cause: err }
+          { status: err.status, retriable, attempts: attemptsMade, cause: err }
         );
       }
 
-      const isQuota = err.status === 429;
-      const delay = isQuota
+      const delay = err.status === 429
         ? (err.retryAfterMs ?? backoffDelay(attempt, { baseMs: quotaBaseMs, capMs: quotaCapMs }))
         : backoffDelay(attempt, { baseMs, capMs });
-      await sleep(delay);
+
+      // Rather than retry early against the server's own guidance, end the
+      // stage with its deadline outcome when the delay cannot fit.
+      if (delay >= remainingMs(deadlineAt)) throw new GenerationTimeoutError();
+
+      await sleep(delay, { signal });
+      throwIfSettled(signal, deadlineAt);
     }
   }
-  // Unreachable (loop always throws or returns), but keeps the type checker
-  // and linters happy.
+
   throw new UpstreamError(lastErr?.message || 'upstream call failed', { attempts: maxAttempts });
 }
 
-module.exports = { withResilience, UpstreamError, sleep, backoffDelay, defaultIsRetriable };
+module.exports = {
+  withResilience,
+  UpstreamError,
+  OperationAbortedError,
+  GenerationTimeoutError,
+  AttemptTimeoutError,
+  sleep,
+  backoffDelay,
+  defaultIsRetriable,
+  monotonicNow,
+  deadlineIn,
+  remainingMs,
+  throwIfSettled,
+};

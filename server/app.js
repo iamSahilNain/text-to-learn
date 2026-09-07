@@ -34,7 +34,9 @@ function createApp(overrides = {}) {
     generateLessonSafe: dependencies.generateLessonSafe,
     searchVideos: dependencies.searchVideos,
   });
-  const wired = { ...dependencies, lessonGenerator };
+  // Tests shorten these so cancellation behaviour can be checked without
+  // waiting out a real ten-minute budget.
+  const wired = { ...dependencies, lessonGenerator, timeouts: dependencies.timeouts || {} };
 
   const app = express();
 
