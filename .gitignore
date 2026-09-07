@@ -1,2 +1,22 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Build output
+client/dist/
+coverage/
+
+# Environment files — .env.example is tracked, real secrets are not
 .env
+.env.*
+!.env.example
+
+# Local benchmark output (server/scripts/measure-reads.js --output)
+*.bench.json
+benchmarks/
+
+# macOS
+.DS_Store
+
+# Personal memory vault (Gehirn) — never commit. Contains health,
+# people, and placement data plus raw transcript chunks.
+memory/

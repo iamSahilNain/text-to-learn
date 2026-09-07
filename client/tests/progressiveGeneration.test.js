@@ -3,11 +3,10 @@
 // ----------------------------------------------------------------------------
 // Activated: client/src/generationReducer.js replaces the single `generating`
 // boolean in LessonPage/CoursePage with a token-guarded state machine. Run
-// with: npm test (uses node --test).
+// with: npm test (uses vitest).
 // ============================================================================
 
-import { test } from 'node:test'
-import assert from 'node:assert'
+import { test, assert } from 'vitest'
 
 import { generationReducer, initialGenerationState } from '../src/generationReducer.js'
 
