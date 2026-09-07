@@ -1,6 +1,7 @@
 'use strict';
 
-const { streamCoursePdf } = require('../services/pdf');
+const { streamCoursePdf, createDefaultPdfDocument } = require('../services/pdf');
+const { logOperation, startTimer, elapsedMsSince } = require('../utils/logging');
 const { sendError, HttpError, normalizeError, logError } = require('../utils/errors');
 const { serializeCourse, serializeModule, effectiveLessonStatus } = require('../services/generationStatus');
 const { createRequestContext } = require('../services/requestContext');
@@ -20,6 +21,8 @@ const HEARTBEAT_INTERVAL_MS = 10_000;
 // Bounds the initial resource read so a stalled database cannot outlive the
 // request context silently.
 const READ_MAX_TIME_MS = 5_000;
+// Bounds the commit itself. It cannot undo a commit that already succeeded.
+const COMMIT_MAX_TIME_MS = 5_000;
 
 // A generation request body is either absent, `{}`, or `{ force: boolean }`.
 // Anything else -- an array, an explicit null, an unknown key, a non-boolean
@@ -38,7 +41,14 @@ function parseGenerationOptions(body) {
   return { force: body.force === true };
 }
 
-function createCourseController({ mongoose, models, generateCourseSafe, lessonGenerator, timeouts = {} }) {
+function createCourseController({
+  mongoose,
+  models,
+  generateCourseSafe,
+  lessonGenerator,
+  createPdfDocument = createDefaultPdfDocument,
+  timeouts = {},
+}) {
   const { Course, Module, Lesson } = models;
   const outlineTimeoutMs = timeouts.outlineMs ?? OUTLINE_REQUEST_TOTAL_MS;
   const bulkTimeoutMs = timeouts.bulkMs ?? BULK_REQUEST_TOTAL_MS;
@@ -49,6 +59,7 @@ function createCourseController({ mongoose, models, generateCourseSafe, lessonGe
 
   async function createCourse(req, res, next) {
     const context = createRequestContext(req, res, { timeoutMs: outlineTimeoutMs });
+    const startedAt = startTimer();
     try {
       const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim() : '';
       if (!topic) {
@@ -87,11 +98,16 @@ function createCourseController({ mongoose, models, generateCourseSafe, lessonGe
             // arrives after the commit succeeded cannot undo it.
             throwIfSettled(context.signal, context.deadlineAt);
 
+            // The module's id is allocated up front so each lesson can be
+            // inserted already pointing at its module. That removes the
+            // backfill pass that used to follow every module.
+            const moduleId = new mongoose.Types.ObjectId();
+
             const lessons = await Lesson.insertMany(
               outlineModule.lessons.map((title) => ({
                 title,
                 content: [],
-                module: null,
+                module: moduleId,
                 generationStatus: 'pending',
                 enrichmentStatus: 'pending',
                 isEnriched: false,
@@ -100,30 +116,33 @@ function createCourseController({ mongoose, models, generateCourseSafe, lessonGe
             );
 
             const [createdModule] = await Module.create([{
+              _id: moduleId,
               title: outlineModule.title,
               course: course._id,
               lessons: lessons.map((lesson) => lesson._id)
             }], { session });
-
-            await Lesson.updateMany(
-              { _id: { $in: lessons.map((lesson) => lesson._id) } },
-              { module: createdModule._id },
-              { session }
-            );
 
             course.modules.push(createdModule._id);
           }
 
           throwIfSettled(context.signal, context.deadlineAt);
           await course.save({ session });
-        });
+        }, { maxCommitTimeMS: COMMIT_MAX_TIME_MS });
       } finally {
         await session.endSession();
       }
 
       const populated = await populatedCourse(course._id);
+      const serialized = serializeCourse(populated);
+      logOperation({
+        operation: 'course_create',
+        status: serialized.outlineStatus,
+        durationMs: elapsedMsSince(startedAt),
+        modules: serialized.modules.length,
+        lessons: serialized.modules.reduce((total, entry) => total + entry.lessons.length, 0),
+      });
       context.complete();
-      res.status(201).json(serializeCourse(populated));
+      res.status(201).json(serialized);
     } catch (err) {
       next(err);
     } finally {
@@ -150,8 +169,16 @@ function createCourseController({ mongoose, models, generateCourseSafe, lessonGe
   }
 
   async function getCourse(req, res, next) {
+    const startedAt = startTimer();
     try {
       const course = await populatedCourse(req.params.id).maxTimeMS(READ_MAX_TIME_MS);
+      // Scoped to the populated database read alone. It is not an
+      // end-to-end latency figure.
+      logOperation({
+        operation: 'db_populated_read',
+        status: course ? 'hit' : 'miss',
+        durationMs: elapsedMsSince(startedAt),
+      });
       if (!course) return sendError(res, 404, 'not_found', 'Course not found');
       res.json(serializeCourse(course));
     } catch (err) {
@@ -163,7 +190,10 @@ function createCourseController({ mongoose, models, generateCourseSafe, lessonGe
     try {
       const course = await populatedCourse(req.params.id).maxTimeMS(READ_MAX_TIME_MS);
       if (!course) return sendError(res, 404, 'not_found', 'Course not found');
-      streamCoursePdf(course, res);
+      // Settles only when the response has the last byte, or the render or
+      // pipeline failed. Without the await, a stream failure would surface
+      // as an unhandled rejection and the client would keep a truncated file.
+      await streamCoursePdf(course, res, { createPdfDocument });
     } catch (err) {
       next(err);
     }

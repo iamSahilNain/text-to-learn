@@ -14,9 +14,12 @@ const Lesson = require('./models/Lesson');
 const { generateCourseSafe, generateLessonSafe } = require('./services/gemini');
 const { searchVideos } = require('./services/youtube');
 const { createLessonGenerator } = require('./services/lessonGeneration');
+const { createDefaultPdfDocument } = require('./services/pdf');
 const { createCourseRouter } = require('./routes/courseRoutes');
 const { createLessonRouter } = require('./routes/lessonRoutes');
 const { errorMiddleware } = require('./utils/errors');
+
+const DEFAULT_CLIENT_ORIGIN = 'http://localhost:5173';
 
 function createApp(overrides = {}) {
   const dependencies = {
@@ -25,6 +28,7 @@ function createApp(overrides = {}) {
     generateCourseSafe,
     generateLessonSafe,
     searchVideos,
+    createPdfDocument: createDefaultPdfDocument,
     ...overrides,
   };
 
@@ -40,7 +44,9 @@ function createApp(overrides = {}) {
 
   const app = express();
 
-  app.use(cors({ origin: process.env.CLIENT_ORIGIN || true }));
+  // Defaults to the Vite dev server's origin. A deployment must set
+  // CLIENT_ORIGIN; reflecting any origin is not an acceptable default.
+  app.use(cors({ origin: process.env.CLIENT_ORIGIN || DEFAULT_CLIENT_ORIGIN }));
   // strict:false lets a JSON primitive through to request-shape validation
   // instead of being rejected as a parse error.
   app.use(express.json({ strict: false, limit: '100kb' }));
@@ -52,10 +58,17 @@ function createApp(overrides = {}) {
     res.json({ message: 'Text-to-Learn backend is running' });
   });
 
+  // Readiness, not liveness: the process can be up while the database is
+  // unreachable, and in that state it cannot serve a single useful request.
+  app.get('/healthz', (req, res) => {
+    const ready = dependencies.mongoose.connection?.readyState === 1;
+    res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
+  });
+
   // Shared error envelope { error: { code, message } }. Mounted last.
   app.use(errorMiddleware);
 
   return app;
 }
 
-module.exports = { createApp };
+module.exports = { createApp, DEFAULT_CLIENT_ORIGIN };

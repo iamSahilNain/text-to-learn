@@ -287,3 +287,86 @@ test('the bulk stream emits a module per module and a counted done event', async
     assert.equal(done.readyLessons + done.degradedLessons, done.totalLessons);
   });
 });
+
+test('a replayed transaction callback rebuilds its documents from scratch', async () => {
+  const { ObjectId } = require('mongoose').Types;
+
+  const created = { courses: [], modules: [], lessons: [] };
+  const outline = {
+    title: 'Rust',
+    description: '',
+    tags: [],
+    modules: [{ title: 'Basics', lessons: ['One', 'Two', 'Three'] }],
+  };
+
+  let replays = 0;
+  const fakeMongoose = {
+    Types: { ObjectId },
+    async startSession() {
+      return {
+        // withTransaction replays its callback on a transient error. Each
+        // replay must build fresh documents rather than reuse the previous
+        // attempt's module references.
+        async withTransaction(callback) {
+          replays += 1;
+          await callback();
+          if (replays === 1) await callback();
+        },
+        async endSession() {},
+      };
+    },
+  };
+
+  const savedCourses = [];
+  const Course = {
+    create: async ([document]) => {
+      const course = { ...document, _id: new ObjectId(), modules: [], async save() { savedCourses.push(this); return this; } };
+      created.courses.push(course);
+      return [course];
+    },
+    findById: () => queryReturning({ ...created.courses.at(-1), modules: [] }),
+  };
+  const Module = {
+    create: async ([document]) => {
+      created.modules.push(document);
+      return [document];
+    },
+  };
+  const Lesson = {
+    insertMany: async (documents) => {
+      const withIds = documents.map((document) => ({ ...document, _id: new ObjectId() }));
+      created.lessons.push(...withIds);
+      return withIds;
+    },
+    updateMany: async () => { throw new Error('the backfill pass must be gone'); },
+  };
+
+  await withServer({
+    mongoose: fakeMongoose,
+    models: { Course, Module, Lesson },
+    generateCourseSafe: async () => ({ value: outline, outlineStatus: 'ready' }),
+  }, async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/courses/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: 'Rust' }),
+    });
+    assert.equal(response.status, 201);
+  });
+
+  assert.equal(created.courses.length, 2, 'each replay creates its own course document');
+  for (const course of created.courses) {
+    assert.equal(course.modules.length, 1, 'exactly one set of module references per replay');
+  }
+
+  assert.equal(created.modules.length, 2);
+  assert.equal(created.lessons.length, 6);
+  for (const courseModule of created.modules) {
+    const lessons = created.lessons.filter((lesson) => String(lesson.module) === String(courseModule._id));
+    assert.equal(lessons.length, 3, 'every lesson is inserted already pointing at its preallocated module id');
+    assert.deepEqual(
+      courseModule.lessons.map(String).sort(),
+      lessons.map((lesson) => String(lesson._id)).sort()
+    );
+  }
+});
