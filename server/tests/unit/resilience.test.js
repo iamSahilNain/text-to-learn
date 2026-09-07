@@ -12,8 +12,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { withResilience, UpstreamError } = require('../services/resilience');
-const { searchVideos } = require('../services/youtube');
+const { withResilience, UpstreamError } = require('../../services/resilience');
+const { searchVideos } = require('../../services/youtube');
 
 test('a slow call is aborted at the timeout instead of hanging', async () => {
   // Never resolves on its own; only responds to abort.

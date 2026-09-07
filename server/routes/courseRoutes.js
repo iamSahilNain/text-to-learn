@@ -1,17 +1,17 @@
 const express = require('express');
-const router = express.Router();
-const {
-  createCourse,
-  getCourses,
-  getCourse,
-  exportCoursePdf,
-  generateCourseContent,
-} = require('../controllers/courseController');
+const { createCourseController } = require('../controllers/courseController');
 
-router.post('/generate', createCourse);
-router.get('/', getCourses);
-router.get('/:id', getCourse);
-router.get('/:id/pdf', exportCoursePdf);
-router.post('/:id/generate-content', generateCourseContent);
+function createCourseRouter(dependencies) {
+  const router = express.Router();
+  const controller = createCourseController(dependencies);
 
-module.exports = router;
+  router.post('/generate', controller.createCourse);
+  router.get('/', controller.getCourses);
+  router.get('/:id', controller.getCourse);
+  router.get('/:id/pdf', controller.exportCoursePdf);
+  router.post('/:id/generate-content', controller.generateCourseContent);
+
+  return router;
+}
+
+module.exports = { createCourseRouter };

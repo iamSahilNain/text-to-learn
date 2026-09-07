@@ -13,7 +13,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { validateCourse, generateCourseSafe } = require('../services/gemini');
+const { validateCourse, generateCourseSafe } = require('../../services/gemini');
 
 test('validateCourse rejects an object missing required fields', () => {
   // A course with no title / no modules must be rejected by the schema
@@ -46,11 +46,12 @@ test('generateCourseSafe repairs a single malformed JSON response', async () => 
     return JSON.stringify(validCourse);
   };
 
-  const result = await generateCourseSafe('testing', { modelCall });
+  const { value, outlineStatus } = await generateCourseSafe('testing', { modelCall });
 
   assert.equal(calls, 2, 'expected exactly one repair re-prompt (2 total calls)');
-  assert.equal(validateCourse(result).ok, true);
-  assert.equal(result.title, validCourse.title);
+  assert.equal(validateCourse(value).ok, true);
+  assert.equal(value.title, validCourse.title);
+  assert.equal(outlineStatus, 'ready', 'repaired model output is real content, not a fallback');
 });
 
 test('generateCourseSafe returns a safe fallback when repair also fails', async () => {
@@ -61,10 +62,11 @@ test('generateCourseSafe returns a safe fallback when repair also fails', async 
     return 'not json at all, still not json';
   };
 
-  const result = await generateCourseSafe('testing', { modelCall });
+  const { value, outlineStatus } = await generateCourseSafe('testing', { modelCall });
 
   assert.equal(calls, 2, 'expected exactly one repair attempt before falling back');
-  assert.equal(validateCourse(result).ok, true, 'the fallback course must itself be valid/renderable');
+  assert.equal(validateCourse(value).ok, true, 'the fallback course must itself be valid/renderable');
+  assert.equal(outlineStatus, 'degraded', 'a fallback outline must be labelled degraded');
 });
 
 test('generateCourseSafe never leaks a raw JSON.parse SyntaxError', async () => {

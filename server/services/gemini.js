@@ -62,8 +62,8 @@ function parseJSON(text) {
 // Call the model once, parse, and validate. Never throws on a bad response
 // -- returns a typed { ok, errors, raw } result so the caller (below) can
 // decide whether to repair, fall back, or succeed.
-async function callAndValidate(prompt, modelCall, validate) {
-  const text = await modelCall(prompt);
+async function callAndValidate(prompt, modelCall, validate, options = {}) {
+  const text = await modelCall(prompt, options);
   const parsed = parseJSON(text);
   if (!parsed.ok) return { ok: false, errors: [parsed.error], raw: text };
 
@@ -169,34 +169,39 @@ function fallbackLesson(lessonTitle) {
 // valid object.
 // ============================================================================
 
+// Returns { value, outlineStatus }. A transport or configuration failure
+// propagates as a typed error -- only invalid model output twice in a row
+// produces the labelled fallback outline.
 async function generateCourseSafe(topic, { modelCall } = {}) {
-  const call = modelCall || ((prompt) => callModel(prompt, { responseSchema: COURSE_RESPONSE_SCHEMA }));
+  const call = modelCall || ((prompt, options) => callModel(prompt, { ...options, responseSchema: COURSE_RESPONSE_SCHEMA }));
   const prompt = buildCoursePrompt(topic);
 
   const first = await callAndValidate(prompt, call, validateCourse);
-  if (first.ok) return first.value;
+  if (first.ok) return { value: first.value, outlineStatus: 'ready' };
 
   const repairPrompt = buildRepairPrompt(prompt, first.raw ?? '', first.errors);
   const repaired = await callAndValidate(repairPrompt, call, validateCourse);
-  if (repaired.ok) return repaired.value;
+  if (repaired.ok) return { value: repaired.value, outlineStatus: 'ready' };
 
-  console.error('[gemini] generateCourseSafe: repair failed, returning fallback course.', repaired.errors);
-  return fallbackCourse(topic);
+  console.error('[gemini] course outline failed validation twice; using the fallback outline.');
+  return { value: fallbackCourse(topic), outlineStatus: 'degraded' };
 }
 
+// Returns { value, generationStatus }, using the same rule: ready for
+// validated model output, degraded only for the local fallback body.
 async function generateLessonSafe(courseTitle, moduleTitle, lessonTitle, { modelCall } = {}) {
-  const call = modelCall || ((prompt) => callModel(prompt));
+  const call = modelCall || ((prompt, options) => callModel(prompt, options));
   const prompt = buildLessonPrompt(courseTitle, moduleTitle, lessonTitle);
 
   const first = await callAndValidate(prompt, call, validateLesson);
-  if (first.ok) return first.value;
+  if (first.ok) return { value: first.value, generationStatus: 'ready' };
 
   const repairPrompt = buildRepairPrompt(prompt, first.raw ?? '', first.errors);
   const repaired = await callAndValidate(repairPrompt, call, validateLesson);
-  if (repaired.ok) return repaired.value;
+  if (repaired.ok) return { value: repaired.value, generationStatus: 'ready' };
 
-  console.error('[gemini] generateLessonSafe: repair failed, returning fallback lesson.', repaired.errors);
-  return fallbackLesson(lessonTitle);
+  console.error('[gemini] lesson content failed validation twice; using the fallback lesson.');
+  return { value: fallbackLesson(lessonTitle), generationStatus: 'degraded' };
 }
 
 module.exports = {
