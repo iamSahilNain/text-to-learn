@@ -2,7 +2,7 @@
 
 const { streamCoursePdf, createDefaultPdfDocument } = require('../services/pdf');
 const { logOperation, startTimer, elapsedMsSince } = require('../utils/logging');
-const { sendError, HttpError, normalizeError, logError } = require('../utils/errors');
+const { sendError, HttpError, normalizeError, logError, PUBLIC_MESSAGES } = require('../utils/errors');
 const { serializeCourse, serializeModule, effectiveLessonStatus } = require('../services/generationStatus');
 const { createRequestContext } = require('../services/requestContext');
 const { monotonicNow, throwIfSettled, GenerationTimeoutError } = require('../services/resilience');
@@ -23,6 +23,34 @@ const HEARTBEAT_INTERVAL_MS = 10_000;
 const READ_MAX_TIME_MS = 5_000;
 // Bounds the commit itself. It cannot undo a commit that already succeeded.
 const COMMIT_MAX_TIME_MS = 5_000;
+
+// Pagination values are accepted only as plain positive integers. A
+// fractional page, an exponent, a garbage suffix, an unsafe integer, or a
+// repeated query parameter (which Express hands over as an array) is a
+// client mistake, not something to round into a default.
+function parsePositiveInteger(raw, { min, max }) {
+  if (raw === undefined) return null;
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw)) {
+    throw new HttpError(400, 'invalid_pagination', PUBLIC_MESSAGES.invalid_pagination);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || (max !== undefined && value > max)) {
+    throw new HttpError(400, 'invalid_pagination', PUBLIC_MESSAGES.invalid_pagination);
+  }
+  return value;
+}
+
+function parsePagination(query) {
+  const page = parsePositiveInteger(query.page, { min: 1 }) ?? 1;
+  const limit = parsePositiveInteger(query.limit, { min: 1, max: MAX_PAGE_SIZE }) ?? DEFAULT_PAGE_SIZE;
+  const skip = (page - 1) * limit;
+  // A page far enough out that its offset is no longer exactly
+  // representable cannot be served correctly, so it is refused.
+  if (!Number.isSafeInteger(skip)) {
+    throw new HttpError(400, 'invalid_pagination', PUBLIC_MESSAGES.invalid_pagination);
+  }
+  return { page, limit, skip };
+}
 
 // A generation request body is either absent, `{}`, or `{ force: boolean }`.
 // Anything else -- an array, an explicit null, an unknown key, a non-boolean
@@ -152,17 +180,21 @@ function createCourseController({
 
   async function getCourses(req, res, next) {
     try {
-      const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-      const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE));
+      const { page, limit, skip } = parsePagination(req.query);
 
-      const courses = await Course.find()
+      // One extra record answers "is there another page" without a second
+      // query and without guessing from a full page.
+      const fetched = await Course.find()
         .select('title description tags modules outlineStatus createdAt')
         .sort({ createdAt: -1, _id: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
+        .skip(skip)
+        .limit(limit + 1)
         .maxTimeMS(READ_MAX_TIME_MS);
 
-      res.json(courses);
+      const hasMore = fetched.length > limit;
+      const courses = (hasMore ? fetched.slice(0, limit) : fetched).map(serializeCourse);
+
+      res.json({ courses, page, pageSize: limit, hasMore });
     } catch (err) {
       next(err);
     }
@@ -327,6 +359,7 @@ function createCourseController({
 module.exports = {
   createCourseController,
   parseGenerationOptions,
+  parsePagination,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
   OUTLINE_REQUEST_TOTAL_MS,

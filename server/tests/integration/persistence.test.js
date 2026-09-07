@@ -316,3 +316,100 @@ test('readiness reflects the database connection', async () => {
     assert.deepEqual(await response.json(), { status: 'unavailable' });
   });
 });
+
+test('the course list pages with an explicit envelope and a stable order', async () => {
+  const created = [];
+  for (let index = 0; index < 21; index += 1) {
+    // Identical timestamps on purpose: the _id tiebreaker is what keeps the
+    // order stable, and an unstable order is how records go missing.
+    created.push(await Course.create({
+      title: `Course ${index + 1}`,
+      description: '',
+      tags: [],
+      outlineStatus: 'ready',
+      modules: [],
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    }));
+  }
+  const expectedOrder = [...created].sort((a, b) => String(b._id).localeCompare(String(a._id))).map((c) => c.title);
+
+  await withServer({}, async ({ baseUrl }) => {
+    const first = await (await fetch(`${baseUrl}/api/courses?page=1&limit=20`)).json();
+    assert.equal(first.page, 1);
+    assert.equal(first.pageSize, 20);
+    assert.equal(first.hasMore, true);
+    assert.equal(first.courses.length, 20);
+    assert.deepEqual(first.courses.map((c) => c.title), expectedOrder.slice(0, 20));
+
+    const second = await (await fetch(`${baseUrl}/api/courses?page=2&limit=20`)).json();
+    assert.equal(second.hasMore, false, 'the extra fetched record is what answers this, not a full page');
+    assert.equal(second.courses.length, 1);
+    assert.deepEqual(second.courses.map((c) => c.title), expectedOrder.slice(20));
+
+    // No record appears on both pages and none is skipped.
+    const seen = [...first.courses, ...second.courses].map((c) => c.title);
+    assert.equal(new Set(seen).size, 21);
+
+    const third = await (await fetch(`${baseUrl}/api/courses?page=3&limit=20`)).json();
+    assert.deepEqual(third, { courses: [], page: 3, pageSize: 20, hasMore: false });
+
+    const defaults = await (await fetch(`${baseUrl}/api/courses`)).json();
+    assert.equal(defaults.page, 1);
+    assert.equal(defaults.pageSize, 20);
+  });
+});
+
+test('an exactly full page does not claim another one exists', async () => {
+  for (let index = 0; index < 20; index += 1) {
+    await Course.create({ title: `Course ${index + 1}`, outlineStatus: 'ready', modules: [] });
+  }
+  await withServer({}, async ({ baseUrl }) => {
+    const page = await (await fetch(`${baseUrl}/api/courses?page=1&limit=20`)).json();
+    assert.equal(page.courses.length, 20);
+    assert.equal(page.hasMore, false);
+  });
+});
+
+test('invalid pagination values are refused rather than rounded into defaults', async () => {
+  await withServer({}, async ({ baseUrl }) => {
+    const invalid = [
+      'page=2x', 'page=1.5', 'page=0', 'page=-1', 'page=1e3', 'page= 1', 'page=',
+      'limit=0', 'limit=51', 'limit=abc', 'limit=2.5', 'limit=-3',
+      'page=1&page=2',
+      `page=${Number.MAX_SAFE_INTEGER}&limit=50`,
+      'page=99999999999999999999',
+    ];
+
+    for (const query of invalid) {
+      const response = await fetch(`${baseUrl}/api/courses?${query}`);
+      assert.equal(response.status, 400, `expected 400 for ?${query}`);
+      assert.deepEqual(await response.json(), {
+        error: { code: 'invalid_pagination', message: 'page and limit must be valid positive integers' },
+      });
+    }
+
+    for (const query of ['', 'page=1', 'limit=1', 'page=3&limit=50']) {
+      const response = await fetch(`${baseUrl}/api/courses?${query}`);
+      assert.equal(response.status, 200, `expected 200 for ?${query}`);
+    }
+  });
+});
+
+test('legacy list records are returned with an effective outline status', async () => {
+  // Written straight to the collection, without the status field, exactly
+  // as the pre-status code left it.
+  await mongoose.connection.db.collection('courses').insertOne({
+    title: 'Legacy course',
+    description: 'Written before outlineStatus existed.',
+    tags: [],
+    modules: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await withServer({}, async ({ baseUrl }) => {
+    const payload = await (await fetch(`${baseUrl}/api/courses?page=1&limit=20`)).json();
+    assert.equal(payload.courses.length, 1);
+    assert.equal(payload.courses[0].outlineStatus, 'ready');
+  });
+});
