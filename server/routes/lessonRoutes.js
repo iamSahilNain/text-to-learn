@@ -9,8 +9,9 @@ const { LESSON_OPERATION_TOTAL_MS } = require('../services/lessonGeneration');
 // single write.
 const LESSON_REQUEST_TOTAL_MS = LESSON_OPERATION_TOTAL_MS;
 
-function createLessonRouter({ models, lessonGenerator, timeouts = {} }) {
+function createLessonRouter({ models, lessonGenerator, timeouts = {}, limiters }) {
   const router = express.Router();
+  const limitGeneration = limiters?.generation ?? ((req, res, next) => next());
   const { Lesson, Module, Course } = models;
   const lessonTimeoutMs = timeouts.lessonMs ?? LESSON_REQUEST_TOTAL_MS;
 
@@ -24,7 +25,7 @@ function createLessonRouter({ models, lessonGenerator, timeouts = {} }) {
     }
   });
 
-  router.post('/:id/generate', async (req, res, next) => {
+  router.post('/:id/generate', limitGeneration, async (req, res, next) => {
     // Registered before the lookup, so a client that leaves mid-request
     // stops the generation rather than paying for it.
     const context = createRequestContext(req, res, { timeoutMs: lessonTimeoutMs });

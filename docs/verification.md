@@ -7,7 +7,7 @@ executed should be treated as unverified.
 
 | | |
 |---|---|
-| Date | 7 September 2026 |
+| Date | 8 September 2026 |
 | Branch | `codex/reliability-and-docs` |
 | Baseline SHA | `f679f50c0ea924d398506cc8c54026b09bcf713f` |
 | Node | v24.20.0 |
@@ -26,13 +26,13 @@ Run from a clean checkout with `MONGO_URI_TEST` pointing at
 | `npm --prefix server ci` | succeeds; leaves the tracked tree unchanged |
 | `npm --prefix client ci` | succeeds; leaves the tracked tree unchanged |
 | `npm --prefix server test` | **76 passed, 0 failed** |
-| `npm --prefix server run test:integration` | **37 passed, 0 failed** |
-| `npm --prefix client test` | **93 passed, 0 failed** (7 files) |
+| `npm --prefix server run test:integration` | **44 passed, 0 failed** |
+| `npm --prefix client test` | **97 passed, 0 failed** (7 files) |
 | `npm --prefix client run lint` | clean, no warnings |
 | `npm --prefix client run build` | succeeds |
 | `node scripts/check.mjs` | all five steps pass |
 
-Total: **206 automated tests**, all passing.
+Total: **217 automated tests**, all passing.
 
 `npm ci` was additionally verified in clean copies of each package root
 containing only `package.json`, `package-lock.json` and `.npmrc`. Installing
@@ -91,6 +91,11 @@ replica set, faked providers)**
   no duplicate write for a ready lesson, the HTTP error table at the real route
   boundary, a real streamed PDF parsed with `pdf-lib`, `/healthz`, and list
   paging at 0/20/21 records with strict pagination rejection.
+- `accessControl.test.js` — the API open with no token configured; with one
+  configured, a missing and a wrong token both rejected identically and a
+  correct one accepted; the generation endpoint gated; `/healthz` and `/`
+  still reachable; the generation tier limiting before the global tier; the
+  global tier covering reads.
 - `migration.test.js` — dry run writing nothing, apply classifying each
   fixture, content and `updatedAt` preserved, a second run applying zero
   writes, and a stale proposal matching nothing.
@@ -151,7 +156,10 @@ These are open, not oversights being glossed over:
   about layout or readability.
 - **The migration has never been applied to real data.** It has been run
   against seeded fixtures on the disposable test database only.
-- **CI has not yet run on a pull request** at the time of writing.
+- **The deployment gate has not been exercised against a real deployment.**
+  Its behaviour is covered by integration tests on loopback; no instance has
+  been deployed behind a proxy, so the `TRUST_PROXY` setting in particular is
+  untested outside a unit of configuration validation.
 
 ## How to add to this record
 
