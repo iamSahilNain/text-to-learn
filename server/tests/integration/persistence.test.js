@@ -413,3 +413,26 @@ test('legacy list records are returned with an effective outline status', async 
     assert.equal(payload.courses[0].outlineStatus, 'ready');
   });
 });
+
+
+test('legacy degraded outline has the same status in list and detail without migration', async () => {
+  const markers = require('../../services/generationStatus');
+  const courseId = new mongoose.Types.ObjectId();
+  const moduleId = new mongoose.Types.ObjectId();
+  const lessonIds = markers.LEGACY_OUTLINE_LESSON_TITLES.map(() => new mongoose.Types.ObjectId());
+  await Lesson.collection.insertMany(lessonIds.map((_id, index) => ({
+    _id, title: markers.LEGACY_OUTLINE_LESSON_TITLES[index], module: moduleId,
+  })));
+  await Module.collection.insertOne({ _id: moduleId, title: markers.LEGACY_OUTLINE_MODULE_TITLE, lessons: lessonIds, course: courseId });
+  await Course.collection.insertOne({ _id: courseId, title: 'Rust' + markers.LEGACY_OUTLINE_TITLE_SUFFIX,
+    description: markers.LEGACY_OUTLINE_DESCRIPTION, tags: [], modules: [moduleId], createdAt: new Date() });
+  await withServer({}, async ({ baseUrl }) => {
+    const listResponse = await fetch(`${baseUrl}/api/courses?page=1&limit=20`);
+    assert.equal(listResponse.status, 200);
+    const list = await listResponse.json();
+    const detail = await (await fetch(`${baseUrl}/api/courses/${courseId}`)).json();
+    assert.equal(list.courses[0].outlineStatus, 'degraded');
+    assert.equal(detail.outlineStatus, 'degraded');
+    assert.deepEqual(list.courses[0].modules, [String(moduleId)]);
+  });
+});

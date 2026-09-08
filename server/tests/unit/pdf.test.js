@@ -139,3 +139,14 @@ test('the filename slug keeps working for awkward titles', () => {
   assert.equal(slug(''), 'course');
   assert.equal(slug(undefined), 'course');
 });
+
+
+test('a synchronous end failure destroys the pipeline without an unhandled rejection', async () => {
+  const res = fakeResponse();
+  const doc = createDefaultPdfDocument();
+  doc.end = () => { throw new Error('end exploded'); };
+  await assert.rejects(() => streamCoursePdf(COURSE, res, { createPdfDocument: () => doc }), /end exploded/);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(doc.destroyed, true);
+  assert.equal(res.destroyed, true);
+});

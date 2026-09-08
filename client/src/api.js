@@ -1,16 +1,5 @@
-// Single source of truth for the backend base URL.
-// Override in client/.env with VITE_API_URL; falls back to localhost for dev.
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
-
-// Shared deployment secret, when the deployed API is gated. Absent in local
-// development, where the server runs without a gate.
-const API_TOKEN = import.meta.env.VITE_API_TOKEN || ''
-
-// Every request to the API goes through this, including the two raw fetch
-// calls that cannot use fetchJson (the SSE stream and the PDF download).
-export function apiHeaders(extra = {}) {
-  return API_TOKEN ? { ...extra, 'X-API-Token': API_TOKEN } : { ...extra }
-}
+// Production serves the browser app and API from the same origin.
+export const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3001')
 
 const LESSON_STATUSES = ['pending', 'ready', 'degraded']
 const OUTLINE_STATUSES = ['ready', 'degraded']
@@ -46,13 +35,14 @@ export class ApiError extends Error {
  * untouched: a cancelled request is not a failure to show the user.
  */
 export async function fetchJson(path, options = {}) {
-  const response = await fetch(API_URL + path, { ...options, headers: apiHeaders(options.headers) })
+  const response = await fetch(API_URL + path, options)
 
   let body
   let decodable = true
   try {
     body = await response.json()
-  } catch {
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
     decodable = false
   }
 

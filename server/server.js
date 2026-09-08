@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 
 const { createApp } = require('./app');
 
-const REQUIRED_ENV = ['MONGO_URI', 'GEMINI_API_KEY'];
+const { getProviderConfig } = require('./services/modelProvider');
 const SERVER_SELECTION_TIMEOUT_MS = 5_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 const DEFAULT_PORT = 3001;
@@ -17,11 +17,19 @@ const DEFAULT_PORT = 3001;
 const DEFAULT_HOST = '127.0.0.1';
 
 async function start() {
-  const missing = REQUIRED_ENV.filter((name) => !process.env[name]);
+  const requiredEnv = ['MONGO_URI', getProviderConfig().keyName];
+  const required = process.env.NODE_ENV === 'production'
+    ? [...requiredEnv, 'APP_USERNAME', 'APP_PASSWORD', 'CLIENT_ORIGIN'] : requiredEnv;
+  const missing = required.filter((name) => !process.env[name]);
   if (missing.length > 0) {
     console.error(`Missing required environment variables: ${missing.join(', ')}. See server/.env.example.`);
     process.exit(1);
   }
+
+  const app = createApp();
+  const host = process.env.HOST || DEFAULT_HOST;
+  const port = process.env.PORT === undefined ? DEFAULT_PORT : Number(process.env.PORT);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
 
   try {
     await mongoose.connect(process.env.MONGO_URI, {
@@ -36,12 +44,13 @@ async function start() {
 
   // Only now: a server that accepts requests before its database is
   // reachable advertises a readiness it does not have.
-  const app = createApp();
-  const host = process.env.HOST || DEFAULT_HOST;
-  const port = Number(process.env.PORT) || DEFAULT_PORT;
-
   const server = app.listen(port, host, () => {
     console.log(`Server running on http://${host}:${port}`);
+  });
+
+  server.on('error', (error) => {
+    console.error(`Listen failed (${error.code || error.name}).`);
+    process.exit(1);
   });
 
   let shuttingDown = false;
@@ -74,7 +83,10 @@ async function start() {
 }
 
 if (require.main === module) {
-  start();
+  start().catch((error) => {
+    console.error(`Startup failed (${error.name}). Check deployment configuration and frontend build.`);
+    process.exit(1);
+  });
 }
 
 module.exports = { start };

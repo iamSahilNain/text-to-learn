@@ -266,3 +266,28 @@ test('the heartbeat interval is cleared on every terminal path', async () => {
     assert.ok(after <= before + 1, `heartbeat timer leaked: ${before} -> ${after}`);
   });
 });
+
+
+test('deadline during initial bulk lookup returns JSON 504 before SSE starts', async () => {
+  let providerCalls = 0;
+  await withServer({
+    models: { Course: { findById: () => {
+      const query = queryReturning(null);
+      query.then = (resolve, reject) => new Promise((_ok, fail) => {
+        setTimeout(() => fail(new Error('late database failure')), 100);
+      }).then(resolve, reject);
+      return query;
+    } } },
+    generateLessonSafe: async () => { providerCalls += 1; },
+    timeouts: { bulkMs: 20 },
+  }, async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/courses/course-1/generate-content`, {
+      method: 'POST', signal: AbortSignal.timeout(2000),
+    });
+    assert.equal(response.status, 504);
+    assert.match(response.headers.get('content-type'), /application\/json/);
+    assert.equal((await response.json()).error.code, 'generation_timeout');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    assert.equal(providerCalls, 0);
+  });
+});

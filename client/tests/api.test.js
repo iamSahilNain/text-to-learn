@@ -1,12 +1,12 @@
-import { describe, expect, test, vi } from 'vitest'
-import { ApiError, apiHeaders, fetchJson, isValidCourse, isValidCourseList, isValidLesson } from '../src/api'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+import { ApiError, fetchJson, isValidCourse, isValidCourseList, isValidLesson } from '../src/api'
 import { API_URL, jsonResponse, nonJsonResponse, course, courseModule, lesson } from './helpers.jsx'
 
 describe('fetchJson', () => {
   test('returns the decoded body of a successful response', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse({ _id: 'c1' }))
     await expect(fetchJson('/api/courses/c1')).resolves.toEqual({ _id: 'c1' })
-    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_URL}/api/courses/c1`, { headers: {} })
+    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_URL}/api/courses/c1`, {})
   })
 
   test('turns an error envelope into a typed ApiError', async () => {
@@ -56,6 +56,17 @@ describe('fetchJson', () => {
     await expect(fetchJson('/api/courses/c1')).rejects.toBe(abort)
   })
 
+  test('an AbortError while consuming the response body passes through unchanged', async () => {
+    const abort = new DOMException('The operation was aborted.', 'AbortError')
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => { throw abort },
+    }))
+
+    await expect(fetchJson('/api/courses/c1')).rejects.toBe(abort)
+  })
+
   test('the caller\'s options, including its signal, are forwarded', async () => {
     const controller = new AbortController()
     globalThis.fetch = vi.fn(async () => jsonResponse({}))
@@ -68,10 +79,10 @@ describe('fetchJson', () => {
     await fetchJson('/api/courses/c1')
     const [, options] = globalThis.fetch.mock.calls[0]
     expect(options.body).toBeUndefined()
-    expect(options.headers['Content-Type']).toBeUndefined()
+    expect(options.headers?.['Content-Type']).toBeUndefined()
   })
 
-  test('a caller\'s own headers survive alongside the token header', async () => {
+  test('a caller\'s own headers survive', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse({}))
     await fetchJson('/api/courses/generate', {
       method: 'POST',
@@ -79,7 +90,7 @@ describe('fetchJson', () => {
       body: '{}',
     })
     const [, options] = globalThis.fetch.mock.calls[0]
-    expect(options.headers['Content-Type']).toBe('application/json')
+    expect(options.headers?.['Content-Type']).toBe('application/json')
     expect(options.body).toBe('{}')
   })
 
@@ -92,18 +103,33 @@ describe('fetchJson', () => {
   })
 })
 
-describe('apiHeaders', () => {
-  // VITE_API_TOKEN is unset in the test environment, which is the same
-  // configuration local development runs with.
-  test('adds no token header when none is configured', () => {
-    expect(apiHeaders()).toEqual({})
-    expect(apiHeaders({ 'Content-Type': 'application/json' }))
-      .toEqual({ 'Content-Type': 'application/json' })
+describe('API URL configuration', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
   })
 
-  test('never drops the caller\'s own headers', () => {
-    const headers = apiHeaders({ Accept: 'application/pdf' })
-    expect(headers.Accept).toBe('application/pdf')
+  test('production uses the origin that served the app', async () => {
+    vi.stubEnv('PROD', true)
+    vi.stubEnv('VITE_API_URL', '')
+    vi.resetModules()
+    const { API_URL: productionUrl } = await import('../src/api')
+    expect(productionUrl).toBe('')
+  })
+
+  test('development defaults to the local API server', async () => {
+    vi.stubEnv('PROD', false)
+    vi.stubEnv('VITE_API_URL', '')
+    vi.resetModules()
+    const { API_URL: developmentUrl } = await import('../src/api')
+    expect(developmentUrl).toBe('http://localhost:3001')
+  })
+
+  test('an explicit API URL overrides the default', async () => {
+    vi.stubEnv('VITE_API_URL', 'http://localhost:4001')
+    vi.resetModules()
+    const { API_URL: overrideUrl } = await import('../src/api')
+    expect(overrideUrl).toBe('http://localhost:4001')
   })
 })
 

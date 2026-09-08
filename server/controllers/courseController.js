@@ -3,10 +3,12 @@
 const { streamCoursePdf, createDefaultPdfDocument } = require('../services/pdf');
 const { logOperation, startTimer, elapsedMsSince } = require('../utils/logging');
 const { sendError, HttpError, normalizeError, logError, PUBLIC_MESSAGES } = require('../utils/errors');
-const { serializeCourse, serializeModule, effectiveLessonStatus } = require('../services/generationStatus');
+const { serializeCourse, serializeModule, effectiveLessonStatus, effectiveOutlineStatus } = require('../services/generationStatus');
 const { createRequestContext } = require('../services/requestContext');
-const { monotonicNow, throwIfSettled, GenerationTimeoutError } = require('../services/resilience');
+const { monotonicNow, throwIfSettled, GenerationTimeoutError, OperationAbortedError } = require('../services/resilience');
 const { LESSON_OPERATION_TOTAL_MS } = require('../services/lessonGeneration');
+
+const { getProviderConfig } = require('../services/modelProvider');
 
 const MAX_TOPIC_LENGTH = 200;
 const DEFAULT_PAGE_SIZE = 20;
@@ -78,11 +80,31 @@ function createCourseController({
   timeouts = {},
 }) {
   const { Course, Module, Lesson } = models;
-  const outlineTimeoutMs = timeouts.outlineMs ?? OUTLINE_REQUEST_TOTAL_MS;
+  const outlineTimeoutMs = timeouts.outlineMs ?? getProviderConfig().outlineMs;
   const bulkTimeoutMs = timeouts.bulkMs ?? BULK_REQUEST_TOTAL_MS;
 
   function populatedCourse(id) {
     return Course.findById(id).populate({ path: 'modules', populate: { path: 'lessons' } });
+  }
+
+  async function readWithinRequest(query, context) {
+    throwIfSettled(context.signal, context.deadlineAt);
+    let onAbort;
+    const aborted = new Promise((_resolve, reject) => {
+      onAbort = () => reject(context.deadlineExpired()
+        ? new GenerationTimeoutError()
+        : new OperationAbortedError());
+      context.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      // maxTimeMS bounds database work; this race also bounds the HTTP wait
+      // and consumes a late rejection if the database outlives the request.
+      const value = await Promise.race([Promise.resolve(query), aborted]);
+      throwIfSettled(context.signal, context.deadlineAt);
+      return value;
+    } finally {
+      context.signal.removeEventListener('abort', onAbort);
+    }
   }
 
   async function createCourse(req, res, next) {
@@ -189,10 +211,22 @@ function createCourseController({
         .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(limit + 1)
+        .populate({
+          path: 'modules',
+          select: 'title lessons',
+          options: { maxTimeMS: READ_MAX_TIME_MS },
+          populate: { path: 'lessons', select: 'title', options: { maxTimeMS: READ_MAX_TIME_MS } },
+        })
         .maxTimeMS(READ_MAX_TIME_MS);
 
       const hasMore = fetched.length > limit;
-      const courses = (hasMore ? fetched.slice(0, limit) : fetched).map(serializeCourse);
+      const courses = (hasMore ? fetched.slice(0, limit) : fetched).map((course) => {
+        // Titles establish legacy fallback status. Keep the list's module
+        // references, without serializing partial lessons as pending content.
+        const plain = course.toObject({ depopulate: true });
+        plain.outlineStatus = effectiveOutlineStatus(course);
+        return serializeCourse(plain);
+      });
 
       res.json({ courses, page, pageSize: limit, hasMore });
     } catch (err) {
@@ -244,7 +278,7 @@ function createCourseController({
     let course;
     try {
       options = parseGenerationOptions(req.body);
-      course = await populatedCourse(req.params.id).maxTimeMS(READ_MAX_TIME_MS);
+      course = await readWithinRequest(populatedCourse(req.params.id).maxTimeMS(READ_MAX_TIME_MS), context);
       if (!course) {
         context.complete();
         context.dispose();
@@ -253,12 +287,8 @@ function createCourseController({
     } catch (err) {
       context.complete();
       context.dispose();
-      return next(err);
-    }
-
-    if (context.signal.aborted) {
-      context.dispose();
-      return;
+      if (context.clientDisconnected()) return;
+      return next(context.deadlineExpired() ? new GenerationTimeoutError() : err);
     }
 
     res.writeHead(200, {

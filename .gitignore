@@ -20,3 +20,5 @@ benchmarks/
 # Personal memory vault (Gehirn) — never commit. Contains health,
 # people, and placement data plus raw transcript chunks.
 memory/
+
+!.env.deploy.example

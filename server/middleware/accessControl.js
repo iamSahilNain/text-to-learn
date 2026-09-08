@@ -1,47 +1,33 @@
 'use strict';
 
-// Two guards that stand between the public internet and the endpoints that
-// spend money.
-//
-// Neither is a user system. There are no accounts and no per-user data:
-// these exist so a deployed instance is not an open billing endpoint, which
-// is a different and much smaller problem than authentication.
-
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
-const { timingSafeEqual } = require('node:crypto');
+const { timingSafeEqual, createHash } = require('node:crypto');
 const { HttpError } = require('../utils/errors');
 
-// Generous enough that ordinary use never notices, small enough that a
-// scanner cannot run up a bill before the window closes.
 const GENERATION_WINDOW_MS = 15 * 60 * 1000;
 const GENERATION_MAX = 20;
 const GLOBAL_WINDOW_MS = 15 * 60 * 1000;
 const GLOBAL_MAX = 600;
 
 function constantTimeEquals(supplied, expected) {
-  const left = Buffer.from(String(supplied));
-  const right = Buffer.from(String(expected));
-  // timingSafeEqual throws on a length mismatch, and the throw would itself
-  // reveal the length, so the lengths are compared first and separately.
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+  const digest = (value) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(supplied), digest(expected));
 }
 
-/**
- * Requires a shared secret on every /api request when API_ACCESS_TOKEN is
- * set. When it is unset the gate is disabled, so local development and the
- * test suite are unaffected.
- *
- * This is a deployment gate, not authentication: one secret shared by every
- * caller, with no identity behind it.
- */
-function createAccessGate(token) {
-  if (!token) return null;
-  return function requireAccessToken(req, res, next) {
-    const supplied = req.get('x-api-token');
-    if (supplied && constantTimeEquals(supplied, token)) return next();
-    // Deliberately does not distinguish a missing token from a wrong one.
-    next(new HttpError(401, 'unauthorized', 'A valid API token is required'));
+// A single private-app login, kept entirely on the server. TLS is supplied
+// by Caddy. No credentials are compiled into the browser bundle.
+function createAccessGate({ username, password } = {}) {
+  if (!username && !password) return null;
+  if (!username || !password || /[:\x00-\x1f\x7f]/.test(username) || password.length < 16) {
+    throw new Error('Set APP_USERNAME and APP_PASSWORD (at least 16 characters)');
+  }
+  return function requireLogin(req, res, next) {
+    const header = req.get('authorization') || '';
+    const match = /^Basic ([A-Za-z0-9+/]+={0,2})$/i.exec(header);
+    const supplied = match ? Buffer.from(match[1], 'base64').toString('utf8') : '';
+    if (constantTimeEquals(supplied, `${username}:${password}`)) return next();
+    res.set('WWW-Authenticate', 'Basic realm="Text-to-Learn", charset="UTF-8"');
+    next(new HttpError(401, 'unauthorized', 'A valid app login is required'));
   };
 }
 
@@ -51,8 +37,7 @@ function limitHandler(req, res, next) {
 }
 
 function keyGenerator(req) {
-  // The IP-derived key normalises IPv6 down to a /64, so one client cannot
-  // simply cycle addresses inside its own prefix.
+  // Group IPv6 addresses using the library default subnet mask.
   return ipKeyGenerator(req.ip);
 }
 
@@ -66,7 +51,7 @@ function createRateLimiters({ generationMax = GENERATION_MAX, globalMax = GLOBAL
   return {
     // Applies to every /api route, generation included.
     global: rateLimit({ ...common, windowMs: GLOBAL_WINDOW_MS, limit: globalMax }),
-    // The three endpoints that each cost a billed model call.
+    // Generation requests may each make multiple provider calls.
     generation: rateLimit({ ...common, windowMs: GENERATION_WINDOW_MS, limit: generationMax }),
   };
 }

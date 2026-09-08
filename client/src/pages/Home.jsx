@@ -14,9 +14,14 @@ export default function Home() {
   const controllerRef = useRef(null)
   const activeRef = useRef(true)
 
-  useEffect(() => () => {
-    activeRef.current = false
-    controllerRef.current?.abort()
+  useEffect(() => {
+    activeRef.current = true
+    return () => {
+      activeRef.current = false
+      controllerRef.current?.abort()
+      controllerRef.current = null
+      busyRef.current = false
+    }
   }, [])
 
   async function handleGenerate(event) {

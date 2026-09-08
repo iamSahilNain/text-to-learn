@@ -1,0 +1,65 @@
+name: text-to-learn
+services:
+  app:
+    image: text-to-learn:${APP_IMAGE_TAG:-local}
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3001"
+      TRUST_PROXY: "1"
+      CLIENT_ORIGIN: https://${DOMAIN:?Set DOMAIN in .env.deploy}
+      APP_USERNAME: ${APP_USERNAME:?Set APP_USERNAME in .env.deploy}
+      APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env.deploy}
+      MONGO_URI: ${MONGO_URI:?Set MONGO_URI in .env.deploy}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+    expose:
+      - "3001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env.deploy}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env.deploy}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:
