@@ -1,12 +1,12 @@
 import { describe, expect, test, vi } from 'vitest'
-import { ApiError, fetchJson, isValidCourse, isValidCourseList, isValidLesson } from '../src/api'
+import { ApiError, apiHeaders, fetchJson, isValidCourse, isValidCourseList, isValidLesson } from '../src/api'
 import { API_URL, jsonResponse, nonJsonResponse, course, courseModule, lesson } from './helpers.jsx'
 
 describe('fetchJson', () => {
   test('returns the decoded body of a successful response', async () => {
     globalThis.fetch = vi.fn(async () => jsonResponse({ _id: 'c1' }))
     await expect(fetchJson('/api/courses/c1')).resolves.toEqual({ _id: 'c1' })
-    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_URL}/api/courses/c1`, {})
+    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_URL}/api/courses/c1`, { headers: {} })
   })
 
   test('turns an error envelope into a typed ApiError', async () => {
@@ -63,12 +63,47 @@ describe('fetchJson', () => {
     expect(globalThis.fetch.mock.calls[0][1]).toMatchObject({ method: 'POST', signal: controller.signal })
   })
 
+  test('a GET gets no body and no Content-Type of its own', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse({}))
+    await fetchJson('/api/courses/c1')
+    const [, options] = globalThis.fetch.mock.calls[0]
+    expect(options.body).toBeUndefined()
+    expect(options.headers['Content-Type']).toBeUndefined()
+  })
+
+  test('a caller\'s own headers survive alongside the token header', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse({}))
+    await fetchJson('/api/courses/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    const [, options] = globalThis.fetch.mock.calls[0]
+    expect(options.headers['Content-Type']).toBe('application/json')
+    expect(options.body).toBe('{}')
+  })
+
   test('non-retriable codes are marked as such', async () => {
-    for (const code of ['invalid_topic', 'bad_id', 'invalid_request', 'invalid_json', 'invalid_pagination', 'not_found', 'service_unavailable']) {
+    for (const code of ['unauthorized', 'invalid_topic', 'bad_id', 'invalid_request', 'invalid_json', 'invalid_pagination', 'not_found', 'service_unavailable']) {
       globalThis.fetch = vi.fn(async () => jsonResponse({ error: { code, message: 'no' } }, { status: 400 }))
       const error = await fetchJson('/x').catch((err) => err)
       expect(error.retriable, code).toBe(false)
     }
+  })
+})
+
+describe('apiHeaders', () => {
+  // VITE_API_TOKEN is unset in the test environment, which is the same
+  // configuration local development runs with.
+  test('adds no token header when none is configured', () => {
+    expect(apiHeaders()).toEqual({})
+    expect(apiHeaders({ 'Content-Type': 'application/json' }))
+      .toEqual({ 'Content-Type': 'application/json' })
+  })
+
+  test('never drops the caller\'s own headers', () => {
+    const headers = apiHeaders({ Accept: 'application/pdf' })
+    expect(headers.Accept).toBe('application/pdf')
   })
 })
 

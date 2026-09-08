@@ -91,7 +91,10 @@ cp .env.example .env        # optional; defaults to http://localhost:3001
 | `server/.env` | `PORT` | no | API port (default `3001`) |
 | `server/.env` | `HOST` | no | Bind address (default `127.0.0.1`) |
 | `server/.env` | `CLIENT_ORIGIN` | no | Allowed CORS origin (default `http://localhost:5173`) |
+| `server/.env` | `API_ACCESS_TOKEN` | no locally, **yes deployed** | Shared secret required on every `/api` request |
+| `server/.env` | `TRUST_PROXY` | no | Proxy hops to trust, as an integer. Required behind a load balancer |
 | `client/.env` | `VITE_API_URL` | no | Backend base URL (default `http://localhost:3001`) |
+| `client/.env` | `VITE_API_TOKEN` | matches the server | Sent as `X-API-Token` |
 
 The server binds loopback by default. Serving a public interface is a
 deliberate deployment decision: set `HOST` and `CLIENT_ORIGIN` explicitly.
@@ -146,10 +149,45 @@ It is a dry run by default, writes metadata only, leaves lesson content and
 `updatedAt` untouched, and is safe to re-run. Take a snapshot first if the data
 matters.
 
+## Deploying
+
+The generation endpoints each cost a billed Gemini call. An ungated public
+URL is therefore an open billing endpoint, and an unlisted URL is not a
+private one: certificates for `*.vercel.app`, `*.onrender.com` and the like
+are published to public Certificate Transparency logs within minutes, and
+scanners read them. Before any deployment:
+
+1. **Set `API_ACCESS_TOKEN`** on the server and the same value as
+   `VITE_API_TOKEN` on the client. Generate one with
+   `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+   Every `/api` request must then carry it as `X-API-Token`; `/healthz` and
+   `/` stay open so a platform health check still works.
+2. **Set `HOST=0.0.0.0`** if the platform requires it, and `CLIENT_ORIGIN` to
+   the deployed client's origin.
+3. **Set `TRUST_PROXY=1`** behind a single platform load balancer, so the
+   rate limiter sees the real client address. Trusting more hops than
+   actually exist lets a client spoof its address and bypass the limiter, so
+   do not guess high.
+4. **Use a replica set** for `MONGO_URI` — Atlas qualifies.
+5. **Run the status migration** against that database once (see above).
+6. **Cap your Gemini spend** in the Google Cloud console. The rate limiter
+   bounds requests per client; a billing cap bounds the bill.
+
+Rate limits, per client address per 15 minutes: **20** generation requests
+and **600** requests overall. Exceeding either returns
+`429 rate_limited`.
+
+`API_ACCESS_TOKEN` is a deployment gate, not authentication. It is one
+secret shared by every caller, with no identity behind it, and the client
+copy is compiled into the JavaScript bundle where anyone who opens devtools
+can read it. It keeps crawlers and drive-by scanners off the paid
+endpoints. It is not a substitute for user accounts.
+
 ## Limitations
 
-- Single user, no accounts, no authorisation. Anyone who can reach the API can
-  read and modify every course.
+- Single user, no accounts, no authorisation. Anyone holding the shared
+  `API_ACCESS_TOKEN` can read and modify every course; there is no per-user
+  ownership.
 - No cross-process locking. Two concurrent generations of the same lesson are
   not coordinated; the last write wins.
 - Optional YouTube enrichment may return nothing, for a missing key, a failed

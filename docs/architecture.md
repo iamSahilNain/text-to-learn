@@ -110,6 +110,34 @@ write. A write already in flight is allowed to settle. Lessons committed before
 the cancellation stay committed — which is what makes a retry cheap, since they
 are then `ready` and skipped.
 
+## Deployment guards
+
+Two middlewares sit in front of the routes, both in
+`middleware/accessControl.js`. Neither is a user system.
+
+`API_ACCESS_TOKEN`, when set, requires that secret as `X-API-Token` on every
+`/api` request. Comparison is constant-time, and a wrong token is not
+distinguished from a missing one. `/healthz` and `/` stay open so a platform
+health check works. When the variable is unset the gate is absent entirely,
+which is how local development and the test suite run.
+
+Rate limiting is always on, keyed by client address, in two tiers: 20
+generation requests and 600 requests overall per 15 minutes. The generation
+tier covers the three endpoints that each cost a billed model call. Both
+reject with the ordinary envelope, `429 rate_limited`, marked retriable
+because the same request succeeds once the window rolls.
+
+`TRUST_PROXY` is an integer count of proxy hops and is opt-in. Behind a load
+balancer `req.ip` is the proxy's address unless Express is told otherwise,
+and the limiter would then key every caller to the same bucket. Trusting
+more hops than exist is worse: a client can spoof the header and bypass the
+limiter, which is why the value is numeric rather than a boolean.
+
+The gate is one shared secret with no identity behind it, and the client's
+copy ships inside the JavaScript bundle. It exists so a deployed instance is
+not an open billing endpoint. Per-user accounts and ownership are a separate
+piece of work that this does not attempt.
+
 ## Errors
 
 `utils/errors.js#normalizeError` is the only place an error becomes a public
@@ -117,6 +145,8 @@ response. Every JSON error is `{ error: { code, message } }`.
 
 | Condition | HTTP | Code | Retriable |
 |---|---:|---|---|
+| Missing or wrong API token | 401 | `unauthorized` | no |
+| Rate limit exceeded | 429 | `rate_limited` | yes |
 | Invalid topic | 400 | `invalid_topic` | no |
 | Malformed ObjectId | 400 | `bad_id` | no |
 | Invalid generation options | 400 | `invalid_request` | no |
@@ -177,6 +207,6 @@ when several courses share a timestamp.
 
 ## Deliberately absent
 
-No accounts, no authorisation, no job queue, no cross-process locking, no
-caching layer. This is a single-process demo; each of those would be a real
+No accounts, no per-user authorisation, no job queue, no cross-process
+locking, no caching layer. This is a single-process demo; each of those would be a real
 requirement for a deployment, and none is pretended to exist.

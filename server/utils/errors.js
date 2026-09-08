@@ -31,6 +31,8 @@ class ConfigurationError extends Error {
 }
 
 const PUBLIC_MESSAGES = {
+  unauthorized: 'A valid API token is required',
+  rate_limited: 'Too many requests. Please wait and try again.',
   bad_id: 'Invalid resource ID',
   invalid_request: 'Invalid request body',
   invalid_json: 'Request body must be valid JSON',
@@ -43,7 +45,8 @@ const PUBLIC_MESSAGES = {
 };
 
 // Codes a client can usefully retry without changing anything first.
-const RETRIABLE_CODES = new Set(['generation_timeout', 'internal_error']);
+// rate_limited is retriable: the same request works once the window rolls.
+const RETRIABLE_CODES = new Set(['generation_timeout', 'internal_error', 'rate_limited']);
 
 /**
  * Classify any error into { status, code, message, retriable }.

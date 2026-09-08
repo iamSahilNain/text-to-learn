@@ -2,12 +2,23 @@
 // Override in client/.env with VITE_API_URL; falls back to localhost for dev.
 export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
+// Shared deployment secret, when the deployed API is gated. Absent in local
+// development, where the server runs without a gate.
+const API_TOKEN = import.meta.env.VITE_API_TOKEN || ''
+
+// Every request to the API goes through this, including the two raw fetch
+// calls that cannot use fetchJson (the SSE stream and the PDF download).
+export function apiHeaders(extra = {}) {
+  return API_TOKEN ? { ...extra, 'X-API-Token': API_TOKEN } : { ...extra }
+}
+
 const LESSON_STATUSES = ['pending', 'ready', 'degraded']
 const OUTLINE_STATUSES = ['ready', 'degraded']
 
 // Codes that describe something the request itself got wrong, or a server
 // that is not configured. Repeating the same request cannot help.
 const NON_RETRIABLE_CODES = new Set([
+  'unauthorized',
   'invalid_topic',
   'bad_id',
   'invalid_request',
@@ -35,7 +46,7 @@ export class ApiError extends Error {
  * untouched: a cancelled request is not a failure to show the user.
  */
 export async function fetchJson(path, options = {}) {
-  const response = await fetch(API_URL + path, options)
+  const response = await fetch(API_URL + path, { ...options, headers: apiHeaders(options.headers) })
 
   let body
   let decodable = true

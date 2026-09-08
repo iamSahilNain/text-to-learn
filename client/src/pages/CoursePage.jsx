@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { API_URL, ApiError, fetchJson, invalidResponse, isValidCourse } from '../api'
+import { API_URL, ApiError, apiHeaders, fetchJson, invalidResponse, isValidCourse } from '../api'
 import { consumeCourseEvents } from '../sse'
 import { generationReducer, initialGenerationState } from '../generationReducer'
 
@@ -87,7 +87,7 @@ export default function CoursePage() {
     try {
       const response = await fetch(`${API_URL}/api/courses/${courseId}/generate-content`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders({ 'Content-Type': 'application/json' }),
         // Ready lessons are reused; degraded and pending ones are retried.
         body: JSON.stringify({ force: false }),
         signal: controller.signal,
@@ -147,7 +147,7 @@ export default function CoursePage() {
     setExportError('')
     let objectUrl = null
     try {
-      const response = await fetch(`${API_URL}/api/courses/${courseId}/pdf`)
+      const response = await fetch(`${API_URL}/api/courses/${courseId}/pdf`, { headers: apiHeaders() })
       if (!response.ok) throw new Error(`server export failed (HTTP ${response.status})`)
       const blob = await response.blob()
       // An empty body or an error page is not a PDF, however it is labelled.
