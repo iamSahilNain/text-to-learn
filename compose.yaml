@@ -1,0 +1,19 @@
+# Local MongoDB for development and integration tests.
+#
+# A single-node replica set, because the course-creation write path uses a
+# transaction and MongoDB only offers transactions on a replica set. Bound to
+# loopback only -- this is a development database, not a deployment target.
+#
+# See README.md for the initialisation commands.
+services:
+  mongo:
+    # mongo:8.0
+    image: mongo@sha256:02a0cc7939f5ed38f30f9bc714ef5f682d49baf9350c54acf302ce833087fe8a
+    command: mongod --replSet rs0 --bind_ip_all
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:

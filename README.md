@@ -1,96 +1,164 @@
 # Text-to-Learn
 
-Enter a topic, get an AI-generated multi-module course. Lesson content is
-generated on demand (Gemini), enriched with related YouTube videos, and the
-whole course can be exported to PDF.
+Enter a topic and get a structured course: an outline of modules and lesson
+titles, lesson bodies generated on demand with Google Gemini, optional related
+YouTube videos, and a PDF export of the whole thing.
 
-- **client/** — React 19 + Vite + Tailwind SPA
+- **client/** — React 19 + Vite + Tailwind single-page app
 - **server/** — Node + Express 5 + Mongoose (MongoDB)
 
-> New to the codebase? Read the docs in this order:
-> [ARCHITECTURE.md](ARCHITECTURE.md) → [ANNOTATED.md](ANNOTATED.md) →
-> [DECISIONS.md](DECISIONS.md) → [LEARNING.md](LEARNING.md). Term you don't
-> recognise? See [GLOSSARY.md](GLOSSARY.md).
+For how the pieces fit together, see [docs/architecture.md](docs/architecture.md).
+For what has actually been tested, see [docs/verification.md](docs/verification.md).
+To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
----
+## How it works
+
+1. **Topic → outline.** One model call produces the course skeleton: a title,
+   a description, tags, and 3–6 modules of 3–6 lesson titles each. Every lesson
+   starts with no body.
+2. **Lesson bodies on demand.** Open a lesson and generate it, or generate the
+   whole course from the course page and watch modules arrive one at a time.
+3. **Retry what did not work.** Model output that fails validation twice is
+   replaced by a clearly labelled fallback body. Those lessons are marked
+   `degraded` and can be retried; lessons that are already `ready` are reused
+   and cost nothing to retry around.
+4. **Export.** A course can be downloaded as a PDF, rendered server-side, with
+   a client-side fallback if the server export fails.
 
 ## Prerequisites
 
-- Node.js 20+ (developed on 25; uses built-in `fetch`, `--watch`, `node:test`)
-- A MongoDB database (Atlas connection string or a local `mongod`)
-- A Google **Gemini** API key — https://aistudio.google.com/app/apikey
-- _(Optional)_ A **YouTube Data API v3** key — without it, lessons generate
-  fine, just with no videos.
+- **Node 24.20.0** and **npm 11.6.2**. The version is pinned in `.nvmrc`, and
+  both package roots set `engine-strict=true`, so an unsupported runtime fails
+  the install instead of producing a lockfile nobody else can reproduce.
+- **MongoDB running as a replica set.** Course creation writes a course, its
+  modules and its lessons in one transaction, and MongoDB offers transactions
+  only on a replica set. A standalone `mongod` will reject them.
+- A **Google Gemini** API key — https://aistudio.google.com/app/apikey
+- *Optional:* a **YouTube Data API v3** key. Without it, lessons generate
+  normally and simply carry no videos.
+- Docker (or Docker Desktop) if you want the local replica set below.
+
+## Local database
+
+`compose.yaml` runs a single-node replica set bound to loopback. Bring it up
+and initialise it once:
+
+```bash
+docker compose up -d mongo
+docker compose exec -T mongo mongosh --quiet --eval 'try { rs.status() } catch (error) { if (error.code === 94) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) } else { throw error } }'
+docker compose exec -T mongo mongosh --quiet --eval 'db.hello().isWritablePrimary'
+```
+
+Wait for the last command to print `true` before starting the server. The
+initialisation command needs `mongod` to be accepting connections, so if it
+fails immediately, wait a few seconds and run it again.
+
+Development URI:
+
+```
+mongodb://127.0.0.1:27017/text_to_learn?replicaSet=rs0&directConnection=true
+```
+
+MongoDB Atlas works too — an Atlas cluster is already a replica set. Use its
+connection string as `MONGO_URI` and skip Docker. If you already have a
+configured replica set, use that; nothing here requires Docker specifically.
+
+The named volume holds your courses. Do not run `docker compose down -v` as
+part of routine setup or testing: that deletes them.
 
 ## Setup
 
 ```bash
-# 1. Backend
+# Backend
 cd server
-npm install
-cp .env.example .env        # then fill in MONGO_URI and GEMINI_API_KEY
+npm ci
+cp .env.example .env        # fill in MONGO_URI and GEMINI_API_KEY
 
-# 2. Frontend
+# Frontend
 cd ../client
-npm install
+npm ci
 cp .env.example .env        # optional; defaults to http://localhost:3001
 ```
 
 ### Environment variables
 
-| File | Var | Required | Purpose |
+| File | Variable | Required | Purpose |
 |---|---|---|---|
-| `server/.env` | `MONGO_URI` | ✅ | MongoDB connection string |
-| `server/.env` | `GEMINI_API_KEY` | ✅ | Gemini course/lesson generation |
-| `server/.env` | `GEMINI_MODEL` | – | Model id (default `gemini-2.5-flash`) |
-| `server/.env` | `YOUTUBE_API_KEY` | – | Video enrichment (degrades to none) |
-| `server/.env` | `PORT` | – | API port (default `3001`) |
-| `client/.env` | `VITE_API_URL` | – | Backend base URL (default localhost:3001) |
+| `server/.env` | `MONGO_URI` | yes | MongoDB connection string (replica set) |
+| `server/.env` | `GEMINI_API_KEY` | yes | Course and lesson generation |
+| `server/.env` | `GEMINI_MODEL` | no | Model id (default `gemini-2.5-flash`) |
+| `server/.env` | `YOUTUBE_API_KEY` | no | Video enrichment; absent means no videos |
+| `server/.env` | `PORT` | no | API port (default `3001`) |
+| `server/.env` | `HOST` | no | Bind address (default `127.0.0.1`) |
+| `server/.env` | `CLIENT_ORIGIN` | no | Allowed CORS origin (default `http://localhost:5173`) |
+| `client/.env` | `VITE_API_URL` | no | Backend base URL (default `http://localhost:3001`) |
 
-`.env` is gitignored — never commit real keys.
+The server binds loopback by default. Serving a public interface is a
+deliberate deployment decision: set `HOST` and `CLIENT_ORIGIN` explicitly.
+`.env` files are gitignored — never commit real keys.
 
-## Run
-
-Two processes, two terminals:
-
-```bash
-# Terminal 1 — API (http://localhost:3001)
-cd server && npm run dev      # or: npm start
-
-# Terminal 2 — UI (http://localhost:5173)
-cd client && npm run dev
-```
-
-Open the UI, type a topic, generate a course, open a lesson and click
-**Generate Lesson Content**, then **Export PDF** from the course page.
-
-## Test
+## Running
 
 ```bash
-cd server && npm test         # node --test
-cd client && npm test         # node --test
+cd server && npm run dev     # http://127.0.0.1:3001
+cd client && npm run dev     # http://localhost:5173
 ```
 
-The suites currently contain only the **learning-checkpoint specs**, which are
-skipped on purpose (see below).
+`GET /healthz` reports readiness: 200 when the database connection is live,
+503 otherwise. The server refuses to start at all if required configuration is
+missing or the database is unreachable.
 
----
+## Tests
 
-## What to build next
+```bash
+# Server unit tests: no database, no sockets, no network
+npm --prefix server test
 
-The hard, interesting parts are intentionally left as **three learning
-checkpoints**. Each ships in a deliberately naive form that keeps the app
-working, is marked in code with `// LEARNING CHECKPOINT #n`, and has a skipped
-spec test describing the target behaviour.
+# Server integration tests: real Express on loopback, real test replica set
+export MONGO_URI_TEST="mongodb://127.0.0.1:27017/text_to_learn_test?replicaSet=rs0&directConnection=true"
+npm --prefix server run test:integration
 
-1. **#1 — LLM structured-output contract & repair** → `server/services/gemini.js`
-2. **#2 — External-API resilience (Gemini + YouTube)** → `server/services/youtube.js`, `gemini.js`
-3. **#3 — Progressive generation UX + frontend state** → `client/src/pages/LessonPage.jsx`
+# Client component tests, lint and production build
+npm --prefix client test
+npm --prefix client run lint
+npm --prefix client run build
+```
 
-Full write-ups (the problem, why naive fails, hints, and reading) live in
-[LEARNING.md](LEARNING.md). Activate a checkpoint by un-skipping its spec test
-and implementing until it passes.
+`node scripts/check.mjs` runs all of the above in order and stops at the first
+failure. It installs nothing, starts nothing and touches no application data;
+bring up the replica set and set `MONGO_URI_TEST` first.
 
-## Project status
+Model and video providers are always faked in tests. The integration database
+name must end in `_test`, and only that database is ever cleared.
 
-See [STATUS.md](STATUS.md) for the original audit and the prioritized MVP path.
+## Migrating existing data
+
+Documents written before the explicit status fields existed carry no
+`generationStatus` or `outlineStatus`. Reads derive an effective value for
+them, so nothing breaks, but the backfill makes the stored data match:
+
+```bash
+npm --prefix server run migrate:status              # report only
+npm --prefix server run migrate:status -- --apply   # write
+```
+
+It is a dry run by default, writes metadata only, leaves lesson content and
+`updatedAt` untouched, and is safe to re-run. Take a snapshot first if the data
+matters.
+
+## Limitations
+
+- Single user, no accounts, no authorisation. Anyone who can reach the API can
+  read and modify every course.
+- No cross-process locking. Two concurrent generations of the same lesson are
+  not coordinated; the last write wins.
+- Optional YouTube enrichment may return nothing, for a missing key, a failed
+  lookup, or a topic with no matching videos. There is no guarantee of a video
+  per lesson or per module.
+- A degraded outline has no in-place regeneration endpoint. Creating a new
+  course is the recovery path.
+- A course with many lessons may exceed the ten-minute stream budget; already
+  generated lessons are kept and skipped when you retry.
+- Generation timing depends on the provider and has not been benchmarked. See
+  [docs/verification.md](docs/verification.md) for what has and has not been
+  measured.

@@ -1,54 +1,65 @@
 const express = require('express');
-const router = express.Router();
-const Lesson = require('../models/Lesson');
-const Module = require('../models/Module');
-const Course = require('../models/Course');
-const { generateLessonSafe } = require('../services/gemini');
-const { searchVideos } = require('../services/youtube');
-const { sendError, HttpError } = require('../utils/errors');
+const { sendError } = require('../utils/errors');
+const { serializeLesson } = require('../services/generationStatus');
+const { parseGenerationOptions } = require('../controllers/courseController');
+const { createRequestContext } = require('../services/requestContext');
+const { LESSON_OPERATION_TOTAL_MS } = require('../services/lessonGeneration');
 
-router.get('/:id', async (req, res, next) => {
-  try {
-    const lesson = await Lesson.findById(req.params.id);
-    if (!lesson) return sendError(res, 404, 'not_found', 'Lesson not found');
-    res.json(lesson);
-  } catch (err) {
-    next(err);
-  }
-});
+// One lesson request: generation, enrichment and the checks around its
+// single write.
+const LESSON_REQUEST_TOTAL_MS = LESSON_OPERATION_TOTAL_MS;
 
-router.post('/:id/generate', async (req, res, next) => {
-  try {
-    const lesson = await Lesson.findById(req.params.id);
-    if (!lesson) return sendError(res, 404, 'not_found', 'Lesson not found');
+function createLessonRouter({ models, lessonGenerator, timeouts = {} }) {
+  const router = express.Router();
+  const { Lesson, Module, Course } = models;
+  const lessonTimeoutMs = timeouts.lessonMs ?? LESSON_REQUEST_TOTAL_MS;
 
-    const module = await Module.findById(lesson.module);
-    if (!module) return sendError(res, 404, 'not_found', "Lesson's module not found");
-    const course = await Course.findById(module.course);
-    if (!course) return sendError(res, 404, 'not_found', "Lesson's course not found");
+  router.get('/:id', async (req, res, next) => {
+    try {
+      const lesson = await Lesson.findById(req.params.id);
+      if (!lesson) return sendError(res, 404, 'not_found', 'Lesson not found');
+      res.json(serializeLesson(lesson));
+    } catch (err) {
+      next(err);
+    }
+  });
 
-    const generated = await generateLessonSafe(course.title, module.title, lesson.title);
+  router.post('/:id/generate', async (req, res, next) => {
+    // Registered before the lookup, so a client that leaves mid-request
+    // stops the generation rather than paying for it.
+    const context = createRequestContext(req, res, { timeoutMs: lessonTimeoutMs });
+    try {
+      const options = parseGenerationOptions(req.body);
 
-    lesson.objectives = generated.objectives || [];
-    lesson.content = generated.content;
+      const lesson = await Lesson.findById(req.params.id);
+      if (!lesson) return sendError(res, 404, 'not_found', 'Lesson not found');
 
-    // Enrich with YouTube videos. searchVideos() degrades to videos: [] on
-    // any failure or when no API key is set (Checkpoint 2), and reports
-    // *why* via enrichmentStatus so the caller can tell "no results" apart
-    // from "the API was unavailable" instead of both silently being [].
-    const { videos, enrichmentStatus } = await searchVideos(`${course.title} ${lesson.title} tutorial`);
-    lesson.videos = videos;
-    lesson.enrichmentStatus = enrichmentStatus;
+      const courseModule = await Module.findById(lesson.module);
+      if (!courseModule) return sendError(res, 404, 'not_found', "Lesson's module not found");
+      const course = await Course.findById(courseModule.course);
+      if (!course) return sendError(res, 404, 'not_found', "Lesson's course not found");
 
-    lesson.isEnriched = true;
-    await lesson.save();
+      // Same shared path the bulk stream uses: a ready lesson is returned
+      // untouched unless force is set, and a degraded one is regenerated.
+      const { lesson: saved } = await lessonGenerator.generateAndPersistLesson({
+        lesson,
+        courseTitle: course.title,
+        moduleTitle: courseModule.title,
+        force: options.force,
+        signal: context.signal,
+        deadlineAt: context.deadlineAt,
+      });
 
-    res.json(lesson);
-  } catch (err) {
-    if (err instanceof HttpError) return next(err);
-    console.error(err);
-    sendError(res, 502, 'generation_failed', 'Failed to generate lesson content');
-  }
-});
+      context.complete();
+      res.json(serializeLesson(saved));
+    } catch (err) {
+      next(err);
+    } finally {
+      context.dispose();
+    }
+  });
 
-module.exports = router;
+  return router;
+}
+
+module.exports = { createLessonRouter };

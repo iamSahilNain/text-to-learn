@@ -1,43 +1,80 @@
-const express = require('express');
-const cors = require('cors');
-const mongoose = require('mongoose');
+'use strict';
+
+// Process bootstrap. Everything that is not "assemble the app" lives here:
+// configuration, the database connection, listening, and shutdown.
+
 require('dotenv').config();
+const mongoose = require('mongoose');
 
-const courseRoutes = require('./routes/courseRoutes');
-const lessonRoutes = require('./routes/lessonRoutes');
-const { errorMiddleware } = require('./utils/errors');
+const { createApp } = require('./app');
 
-const app = express();
+const REQUIRED_ENV = ['MONGO_URI', 'GEMINI_API_KEY'];
+const SERVER_SELECTION_TIMEOUT_MS = 5_000;
+const SHUTDOWN_TIMEOUT_MS = 5_000;
+const DEFAULT_PORT = 3001;
+// Loopback by default. Serving a public interface is a deployment decision
+// that has to be made explicitly with HOST.
+const DEFAULT_HOST = '127.0.0.1';
 
-// CORS is open (`origin: true`, i.e. reflect the request's Origin) by
-// default for local dev. Set CLIENT_ORIGIN in .env to lock it down to your
-// deployed client's origin.
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || true }));
-app.use(express.json());
+async function start() {
+  const missing = REQUIRED_ENV.filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    console.error(`Missing required environment variables: ${missing.join(', ')}. See server/.env.example.`);
+    process.exit(1);
+  }
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch((err) => {
-    // Fail loudly: a bad MONGO_URI previously left the server "up" while
-    // every request 500'd forever with no signal as to why.
-    console.error('MongoDB connection failed:', err.message);
-    console.error('Check MONGO_URI in server/.env. The server will keep running but every DB-backed request will fail.');
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS,
+    });
+  } catch (err) {
+    // Never the raw message: a connection error echoes the URI, credentials
+    // included.
+    console.error(`MongoDB connection failed (${err.name}). Check MONGO_URI in server/.env.`);
+    process.exit(1);
+  }
+
+  // Only now: a server that accepts requests before its database is
+  // reachable advertises a readiness it does not have.
+  const app = createApp();
+  const host = process.env.HOST || DEFAULT_HOST;
+  const port = Number(process.env.PORT) || DEFAULT_PORT;
+
+  const server = app.listen(port, host, () => {
+    console.log(`Server running on http://${host}:${port}`);
   });
 
-app.use('/api/courses', courseRoutes);
-app.use('/api/lessons', lessonRoutes);
+  let shuttingDown = false;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}, shutting down.`);
 
-app.get('/', (req, res) => {
-  res.json({ message: 'Text-to-Learn backend is running' });
-});
+    const forced = setTimeout(() => {
+      console.error('Shutdown exceeded its window; exiting.');
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+    forced.unref();
 
-// Shared error envelope { error: { code, message } } for anything routes
-// pass to next(err). Must be mounted last.
-app.use(errorMiddleware);
+    try {
+      await new Promise((resolve) => server.close(resolve));
+      await mongoose.disconnect();
+      clearTimeout(forced);
+      process.exit(0);
+    } catch (err) {
+      console.error(`Shutdown failed (${err.name}).`);
+      process.exit(1);
+    }
+  }
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 
-module.exports = app;
+  return server;
+}
+
+if (require.main === module) {
+  start();
+}
+
+module.exports = { start };
