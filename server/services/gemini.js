@@ -4,9 +4,11 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { validateCourse, validateLesson, COURSE_RESPONSE_SCHEMA } = require('./schemas');
 const { withResilience, deadlineIn, throwIfSettled } = require('./resilience');
 const { ConfigurationError } = require('../utils/errors');
+const { getProviderConfig } = require('./modelProvider');
+const { callDeepSeek } = require('./deepseek');
 
-// The whole model stage -- first call, its retries, and the one repair round
-// -- shares this budget. The repair does not get a fresh 25 seconds.
+// Gemini transport defaults. Both providers share one model-stage deadline
+// across the first call, its retries and the repair round; modelProvider selects it.
 const MODEL_STAGE_TOTAL_MS = 25_000;
 const MODEL_ATTEMPT_TIMEOUT_MS = 10_000;
 const MODEL_MAX_ATTEMPTS = 3;
@@ -50,6 +52,7 @@ function getModel({ responseSchema } = {}) {
 // caller; tests inject a fake with the same (prompt, options) contract so
 // they run with no network access.
 async function callModel(prompt, { signal, deadlineAt, responseSchema } = {}) {
+  if (getProviderConfig().name === 'deepseek') return callDeepSeek(prompt, { signal, deadlineAt });
   requireApiKey();
   return withResilience(
     async (attemptSignal) => {
@@ -188,7 +191,7 @@ async function generateCourseSafe(topic, { modelCall, signal, deadlineAt } = {})
   const call = modelCall || ((prompt, options) => callModel(prompt, { ...options, responseSchema: COURSE_RESPONSE_SCHEMA }));
   const prompt = buildCoursePrompt(topic);
   // Created once, here: both rounds share it.
-  const stage = { signal, deadlineAt: deadlineIn(MODEL_STAGE_TOTAL_MS, deadlineAt) };
+  const stage = { signal, deadlineAt: deadlineIn(getProviderConfig().stageMs, deadlineAt) };
   throwIfSettled(stage.signal, stage.deadlineAt);
 
   const first = await callAndValidate(prompt, call, validateCourse, stage);
@@ -202,7 +205,7 @@ async function generateCourseSafe(topic, { modelCall, signal, deadlineAt } = {})
   const repaired = await callAndValidate(repairPrompt, call, validateCourse, stage);
   if (repaired.ok) return { value: repaired.value, outlineStatus: 'ready' };
 
-  console.error('[gemini] course outline failed validation twice; using the fallback outline.');
+  console.error('[generation] course outline failed validation twice; using the fallback outline.');
   return { value: fallbackCourse(topic), outlineStatus: 'degraded' };
 }
 
@@ -211,7 +214,7 @@ async function generateCourseSafe(topic, { modelCall, signal, deadlineAt } = {})
 async function generateLessonSafe(courseTitle, moduleTitle, lessonTitle, { modelCall, signal, deadlineAt } = {}) {
   const call = modelCall || ((prompt, options) => callModel(prompt, options));
   const prompt = buildLessonPrompt(courseTitle, moduleTitle, lessonTitle);
-  const stage = { signal, deadlineAt: deadlineIn(MODEL_STAGE_TOTAL_MS, deadlineAt) };
+  const stage = { signal, deadlineAt: deadlineIn(getProviderConfig().stageMs, deadlineAt) };
   throwIfSettled(stage.signal, stage.deadlineAt);
 
   const first = await callAndValidate(prompt, call, validateLesson, stage);
@@ -225,7 +228,7 @@ async function generateLessonSafe(courseTitle, moduleTitle, lessonTitle, { model
   const repaired = await callAndValidate(repairPrompt, call, validateLesson, stage);
   if (repaired.ok) return { value: repaired.value, generationStatus: 'ready' };
 
-  console.error('[gemini] lesson content failed validation twice; using the fallback lesson.');
+  console.error('[generation] lesson content failed validation twice; using the fallback lesson.');
   return { value: fallbackLesson(lessonTitle), generationStatus: 'degraded' };
 }
 

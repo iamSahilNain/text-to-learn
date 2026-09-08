@@ -5,7 +5,7 @@ Current state of the system. For setup, see [../README.md](../README.md).
 ## Shape
 
 ```
-Home ──POST /api/courses/generate──▶ Gemini (outline)
+Home ──POST /api/courses/generate──▶ Selected provider (outline)
                                           │
                                           ▼
                                  one transaction:
@@ -14,7 +14,7 @@ Home ──POST /api/courses/generate──▶ Gemini (outline)
 CoursePage ◀──GET /api/courses/:id────────┘
    │
    ├─POST /api/courses/:id/generate-content ──▶ SSE: module… module… done|error
-   │        (per lesson: Gemini body, then optional YouTube)
+   │        (per lesson: provider body, then optional YouTube)
    │
    └─GET /api/courses/:id/pdf ──▶ PDFKit ──▶ streamed download
 
@@ -86,10 +86,11 @@ usable disconnect signal.
 
 | Scope | Budget | Attempt cap | Attempts |
 |---|---:|---:|---:|
-| Model stage (first round + repair) | 25,000 ms | 10,000 ms | 3 |
+| Gemini model stage (first round + repair) | 25,000 ms | 10,000 ms | 3 |
+| DeepSeek model stage (first round + repair) | 90,000 ms | 40,000 ms | 3 |
 | YouTube enrichment | 6,000 ms | 2,000 ms | 3 |
-| One lesson operation | 35,000 ms | composed | — |
-| Outline request | 35,000 ms | composed | — |
+| One lesson operation | Gemini 35,000 ms; DeepSeek 110,000 ms | composed | — |
+| Outline request | Gemini 35,000 ms; DeepSeek 100,000 ms | composed | — |
 | Full-course stream | 600,000 ms | per-lesson limits apply | — |
 
 Each stage's deadline is the earlier of its own budget and its parent's.
@@ -143,7 +144,7 @@ response. Every JSON error is `{ error: { code, message } }`.
 | Invalid pagination values | 400 | `invalid_pagination` | no |
 | Body over 100 KB | 413 | `request_too_large` | no |
 | Missing resource | 404 | `not_found` | no |
-| Missing Gemini configuration | 503 | `service_unavailable` | no |
+| Missing selected provider configuration | 503 | `service_unavailable` | no |
 | Exhausted upstream call | 502 | `upstream_unavailable` | from the typed error |
 | Deadline exhausted or cancelled | 504 | `generation_timeout` | yes |
 | Database or unexpected failure | 500 | `internal_error` | yes |
@@ -199,3 +200,8 @@ when several courses share a timestamp.
 No accounts, no per-user authorisation, no job queue, no cross-process
 locking, no caching layer. This is a single-process demo; each of those would be a real
 requirement for a deployment, and none is pretended to exist.
+
+`AI_PROVIDER` selects `gemini` (backward-compatible default) or `deepseek`. Both
+use the same prompt, validation, one-repair and labelled-fallback pipeline.
+DeepSeek uses its Chat Completions endpoint with JSON mode and thinking disabled;
+only the selected provider key is required at startup.

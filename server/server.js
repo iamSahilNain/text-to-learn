@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 
 const { createApp } = require('./app');
 
-const REQUIRED_ENV = ['MONGO_URI', 'GEMINI_API_KEY'];
+const { getProviderConfig } = require('./services/modelProvider');
 const SERVER_SELECTION_TIMEOUT_MS = 5_000;
 const SHUTDOWN_TIMEOUT_MS = 5_000;
 const DEFAULT_PORT = 3001;
@@ -17,8 +17,9 @@ const DEFAULT_PORT = 3001;
 const DEFAULT_HOST = '127.0.0.1';
 
 async function start() {
+  const requiredEnv = ['MONGO_URI', getProviderConfig().keyName];
   const required = process.env.NODE_ENV === 'production'
-    ? [...REQUIRED_ENV, 'APP_USERNAME', 'APP_PASSWORD', 'CLIENT_ORIGIN'] : REQUIRED_ENV;
+    ? [...requiredEnv, 'APP_USERNAME', 'APP_PASSWORD', 'CLIENT_ORIGIN'] : requiredEnv;
   const missing = required.filter((name) => !process.env[name]);
   if (missing.length > 0) {
     console.error(`Missing required environment variables: ${missing.join(', ')}. See server/.env.example.`);

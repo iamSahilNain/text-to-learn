@@ -16,7 +16,10 @@ services:
       APP_USERNAME: ${APP_USERNAME:?Set APP_USERNAME in .env.deploy}
       APP_PASSWORD: ${APP_PASSWORD:?Set APP_PASSWORD in .env.deploy}
       MONGO_URI: ${MONGO_URI:?Set MONGO_URI in .env.deploy}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:?Set GEMINI_API_KEY in .env.deploy}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
     expose:

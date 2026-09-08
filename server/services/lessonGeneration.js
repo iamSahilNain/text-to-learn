@@ -4,9 +4,10 @@ const { effectiveLessonStatus } = require('./generationStatus');
 const { throwIfSettled } = require('./resilience');
 
 // A single lesson operation, generation and enrichment together, gets this
-// much. Each lesson's deadline is the earlier of now + 35s and its parent
+// much. The selected provider determines the budget, bounded by its parent
 // request's deadline.
-const LESSON_OPERATION_TOTAL_MS = 35_000;
+const { getProviderConfig } = require('./modelProvider');
+const LESSON_OPERATION_TOTAL_MS = getProviderConfig().lessonMs;
 
 /**
  * The single generate-and-persist path for one lesson. Both POST

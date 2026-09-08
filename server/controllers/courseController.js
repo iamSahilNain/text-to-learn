@@ -8,6 +8,8 @@ const { createRequestContext } = require('../services/requestContext');
 const { monotonicNow, throwIfSettled, GenerationTimeoutError, OperationAbortedError } = require('../services/resilience');
 const { LESSON_OPERATION_TOTAL_MS } = require('../services/lessonGeneration');
 
+const { getProviderConfig } = require('../services/modelProvider');
+
 const MAX_TOPIC_LENGTH = 200;
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 50;
@@ -78,7 +80,7 @@ function createCourseController({
   timeouts = {},
 }) {
   const { Course, Module, Lesson } = models;
-  const outlineTimeoutMs = timeouts.outlineMs ?? OUTLINE_REQUEST_TOTAL_MS;
+  const outlineTimeoutMs = timeouts.outlineMs ?? getProviderConfig().outlineMs;
   const bulkTimeoutMs = timeouts.bulkMs ?? BULK_REQUEST_TOTAL_MS;
 
   function populatedCourse(id) {

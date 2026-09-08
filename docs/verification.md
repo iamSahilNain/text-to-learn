@@ -183,3 +183,16 @@ unprivileged user and fake provider credentials. `scripts/smoke-deployment.mjs`
 passed against that container: database readiness, anonymous denial,
 authenticated frontend/assets/API, SPA deep links and origin rejection.
 No live Gemini/YouTube call or public DNS/certificate issuance was tested.
+
+
+### DeepSeek provider follow-up
+
+95 server unit tests and 50 integration tests passed; the unchanged client suite
+passed all 99 tests. The DeepSeek adapter tests exercise the real generation
+pipeline with a fake HTTP transport, including JSON request shape, valid course
+and lesson responses, repair/fallback, truncation, 4xx failures including balance
+errors, 429/503 retries, Retry-After, stalled body deadlines and cancellation.
+Startup was checked with a DeepSeek key and no Gemini key. The Docker image was
+rebuilt and its smoke test passed with fake DeepSeek credentials and no Gemini
+key. Compose configuration validated. No live DeepSeek request was made; content
+quality and the initial timeout budgets remain unmeasured with the real provider.

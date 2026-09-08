@@ -1,7 +1,7 @@
 # Text-to-Learn
 
 Enter a topic and get a structured course: an outline of modules and lesson
-titles, lesson bodies generated on demand with Google Gemini, optional related
+titles, lesson bodies generated on demand with DeepSeek or Google Gemini, optional related
 YouTube videos, and a PDF export of the whole thing.
 
 - **client/** — React 19 + Vite + Tailwind single-page app
@@ -33,7 +33,7 @@ To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 - **MongoDB running as a replica set.** Course creation writes a course, its
   modules and its lessons in one transaction, and MongoDB offers transactions
   only on a replica set. A standalone `mongod` will reject them.
-- A **Google Gemini** API key — https://aistudio.google.com/app/apikey
+- A **DeepSeek** API key ([API console](https://platform.deepseek.com/)), or a **Google Gemini** key ([AI Studio](https://aistudio.google.com/app/apikey))
 - *Optional:* a **YouTube Data API v3** key. Without it, lessons generate
   normally and simply carry no videos.
 - Docker (or Docker Desktop) if you want the local replica set below.
@@ -85,7 +85,9 @@ cp .env.example .env        # optional; defaults to http://localhost:3001
 | File | Variable | Required | Purpose |
 |---|---|---|---|
 | `server/.env` | `MONGO_URI` | yes | MongoDB connection string (replica set) |
-| `server/.env` | `GEMINI_API_KEY` | yes | Course and lesson generation |
+| `server/.env` | `AI_PROVIDER` | no | `gemini` by default; deployment template selects `deepseek` |
+| `server/.env` | `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | key required for DeepSeek | Default model `deepseek-v4-flash` |
+| `server/.env` | `GEMINI_API_KEY` | for Gemini | Course and lesson generation |
 | `server/.env` | `GEMINI_MODEL` | no | Model id (default `gemini-2.5-flash`) |
 | `server/.env` | `YOUTUBE_API_KEY` | no | Video enrichment; absent means no videos |
 | `server/.env` | `PORT` | no | API port (default `3001`) |

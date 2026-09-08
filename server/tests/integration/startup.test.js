@@ -73,3 +73,15 @@ test('a healthy start listens on loopback and shuts down cleanly on SIGTERM', as
   assert.match(result.stdout, /Received SIGTERM, shutting down\./);
   assert.equal(result.code, 0, `expected a clean exit, got code=${result.code} signal=${result.signal}`);
 });
+
+
+test('DeepSeek startup requires its key instead of the Gemini key', async () => {
+  const missing = await runServer({ AI_PROVIDER: 'deepseek', MONGO_URI: 'unused', DEEPSEEK_API_KEY: '', GEMINI_API_KEY: '' });
+  assert.equal(missing.code, 1);
+  assert.match(missing.stderr, /Missing required environment variables: DEEPSEEK_API_KEY/);
+  const healthy = await runServer({ AI_PROVIDER: 'deepseek', MONGO_URI: testDatabaseUri(),
+    DEEPSEEK_API_KEY: 'fake-deepseek-key', GEMINI_API_KEY: '', PORT: '0', HOST: '127.0.0.1',
+  }, { killAfterMs: 1500 });
+  assert.match(healthy.stdout, /Server running/);
+  assert.equal(healthy.code, 0);
+});
