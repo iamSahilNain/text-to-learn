@@ -62,6 +62,7 @@ test('a parser error never reaches the caller', async () => {
 const {
   generateLessonSafe,
   MODEL_STAGE_TOTAL_MS,
+  MODEL_MAX_ATTEMPTS,
 } = require('../../services/gemini');
 const {
   UpstreamError,
@@ -138,24 +139,37 @@ for (const status of [400, 401, 403]) {
   });
 }
 
-for (const status of [429, 503]) {
+// The budget has to comfortably exceed the worst-case backoff for the
+// status under test, or the wrapper is correct to refuse the retry and the
+// assertion below becomes a coin flip. 429 uses the much longer quota
+// schedule (base 1800ms), so its worst case is ~5.4s across two delays;
+// 503 uses the ordinary schedule (base 300ms) and needs ~0.9s.
+for (const [status, budgetMs] of [[429, 20_000], [503, 15_000]]) {
   test(`an HTTP ${status} is retried within the budget and then gives up`, async () => {
     await withFakeTransport(
       async () => httpResponse(status, { error: { message: 'later' } }),
       async (calls) => {
         await assert.rejects(
-          () => generateLessonSafe('Rust', 'Basics', 'Ownership', { deadlineAt: deadlineIn(1_500) }),
+          () => generateLessonSafe('Rust', 'Basics', 'Ownership', { deadlineAt: deadlineIn(budgetMs) }),
           (err) => {
-            assert.ok(err instanceof UpstreamError || err instanceof GenerationTimeoutError);
+            assert.ok(err instanceof UpstreamError, `expected an exhausted upstream call, got ${err.name}`);
+            assert.equal(err.status, status);
+            assert.equal(err.retriable, true);
+            assert.equal(err.attempts, MODEL_MAX_ATTEMPTS);
             return true;
           }
         );
-        assert.ok(calls.length > 1, `expected a retry, saw ${calls.length} call(s)`);
-        assert.ok(calls.length <= 3, `expected at most 3 attempts, saw ${calls.length}`);
+        // Given a budget that fits the backoff, the policy is exhaustive:
+        // exactly maxAttempts calls, no more and no fewer.
+        assert.equal(calls.length, MODEL_MAX_ATTEMPTS);
       }
     );
   });
 }
+
+// The other half of the policy -- refusing a retry whose delay will not fit
+// -- is asserted deterministically in resilience.test.js, using an explicit
+// Retry-After rather than a sampled jitter.
 
 test('a missing API key fails immediately with no request at all', async () => {
   const originalFetch = global.fetch;
