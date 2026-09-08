@@ -166,3 +166,20 @@ These are open, not oversights being glossed over:
 Record the command, the environment, the counts you actually saw, and whether
 providers were faked or live. If a check did not run, say so here rather than
 leaving it out.
+
+
+## Deployment verification — 2026-09-08
+
+On Node 24.20.0 with npm 11.6.2: 77 server unit tests, 49 server integration
+tests and 99 client tests passed. Client lint and production build passed.
+Integration tests used a disposable local MongoDB replica-set database and fake
+providers. New coverage checks Basic authentication, protected SPA deep links
+and assets, cross-origin mutation rejection, missing production credentials,
+legacy list/detail status consistency, lookup deadlines and synchronous PDF
+finalization failures. Home and CoursesList tests mount under StrictMode.
+
+The production Docker image built and ran with a read-only filesystem,
+unprivileged user and fake provider credentials. `scripts/smoke-deployment.mjs`
+passed against that container: database readiness, anonymous denial,
+authenticated frontend/assets/API, SPA deep links and origin rejection.
+No live Gemini/YouTube call or public DNS/certificate issuance was tested.

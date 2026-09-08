@@ -70,6 +70,8 @@ export default function CoursesList() {
     return () => {
       requestIdRef.current += 1
       controllerRef.current?.abort()
+      controllerRef.current = null
+      busyRef.current = false
     }
   }, [load])
 

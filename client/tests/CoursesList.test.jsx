@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { describe, expect, test } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -10,13 +11,15 @@ const PAGE_SIZE = 20
 
 function renderList() {
   return render(
+    <StrictMode>
     <MemoryRouter initialEntries={['/courses']}>
       <Routes>
         <Route path="/courses" element={<CoursesList />} />
         <Route path="/course/:courseId" element={<p>Course page</p>} />
         <Route path="/" element={<p>Home</p>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </StrictMode>,
   )
 }
 

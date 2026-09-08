@@ -112,31 +112,20 @@ are then `ready` and skipped.
 
 ## Deployment guards
 
-Two middlewares sit in front of the routes, both in
-`middleware/accessControl.js`. Neither is a user system.
+Production requires `APP_USERNAME` and `APP_PASSWORD`; the HTTP Basic gate
+protects all pages, assets and API routes. Only `/healthz` is public. Credentials
+are compared using constant-time digest comparison and never compiled into the
+frontend. Browser mutations with an Origin different from `CLIENT_ORIGIN` are
+rejected. Local development can omit both login variables.
 
-`API_ACCESS_TOKEN`, when set, requires that secret as `X-API-Token` on every
-`/api` request. Comparison is constant-time, and a wrong token is not
-distinguished from a missing one. `/healthz` and `/` stay open so a platform
-health check works. When the variable is unset the gate is absent entirely,
-which is how local development and the test suite run.
+Caddy terminates HTTPS and proxies to Express over the private Compose network.
+Express serves the frontend build and SPA deep links from the same origin as the
+API. `TRUST_PROXY=1` trusts that one proxy; do not expose the app port directly.
 
-Rate limiting is always on, keyed by client address, in two tiers: 20
-generation requests and 600 requests overall per 15 minutes. The generation
-tier covers the three endpoints that each cost a billed model call. Both
-reject with the ordinary envelope, `429 rate_limited`, marked retriable
-because the same request succeeds once the window rolls.
-
-`TRUST_PROXY` is an integer count of proxy hops and is opt-in. Behind a load
-balancer `req.ip` is the proxy's address unless Express is told otherwise,
-and the limiter would then key every caller to the same bucket. Trusting
-more hops than exist is worse: a client can spoof the header and bypass the
-limiter, which is why the value is numeric rather than a boolean.
-
-The gate is one shared secret with no identity behind it, and the client's
-copy ships inside the JavaScript bundle. It exists so a deployed instance is
-not an open billing endpoint. Per-user accounts and ownership are a separate
-piece of work that this does not attempt.
+Per-IP limits allow 20 generation requests and 600 API requests per 15 minutes.
+The limits are process-local. Generation may involve multiple model calls, so
+these are request limits, not a spending cap. All authenticated users share the
+same courses. See [deployment instructions](deployment.md).
 
 ## Errors
 
@@ -145,7 +134,7 @@ response. Every JSON error is `{ error: { code, message } }`.
 
 | Condition | HTTP | Code | Retriable |
 |---|---:|---|---|
-| Missing or wrong API token | 401 | `unauthorized` | no |
+| Missing or wrong app login | 401 | `unauthorized` | no |
 | Rate limit exceeded | 429 | `rate_limited` | yes |
 | Invalid topic | 400 | `invalid_topic` | no |
 | Malformed ObjectId | 400 | `bad_id` | no |

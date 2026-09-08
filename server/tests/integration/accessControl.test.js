@@ -43,35 +43,35 @@ async function withServer(overrides, run) {
   }
 }
 
-test('with no token configured the API is open, as in local development', async () => {
+test('with no login configured the API is open, as in local development', async () => {
   await withServer(baseOverrides(), async ({ baseUrl }) => {
     assert.equal((await fetch(`${baseUrl}/api/courses/course-1`)).status, 200);
   });
 });
 
-test('with a token configured every /api request must carry it', async () => {
-  await withServer(baseOverrides({ accessToken: 's3cret-token' }), async ({ baseUrl }) => {
+test('with a login configured every /api request requires authentication', async () => {
+  await withServer(baseOverrides({ auth: { username: 'owner', password: 'test-password-long-enough' } }), async ({ baseUrl }) => {
     const missing = await fetch(`${baseUrl}/api/courses/course-1`);
     assert.equal(missing.status, 401);
     assert.deepEqual(await missing.json(), {
-      error: { code: 'unauthorized', message: 'A valid API token is required' },
+      error: { code: 'unauthorized', message: 'A valid app login is required' },
     });
 
-    const wrong = await fetch(`${baseUrl}/api/courses/course-1`, { headers: { 'X-API-Token': 'wrong-length-x' } });
+    const wrong = await fetch(`${baseUrl}/api/courses/course-1`, { headers: { Authorization: 'Basic ' + Buffer.from('owner:wrong').toString('base64') } });
     assert.equal(wrong.status, 401);
     assert.deepEqual(
       await wrong.json(),
-      { error: { code: 'unauthorized', message: 'A valid API token is required' } },
+      { error: { code: 'unauthorized', message: 'A valid app login is required' } },
       'a wrong token is not distinguished from a missing one',
     );
 
-    const right = await fetch(`${baseUrl}/api/courses/course-1`, { headers: { 'X-API-Token': 's3cret-token' } });
+    const right = await fetch(`${baseUrl}/api/courses/course-1`, { headers: { Authorization: 'Basic ' + Buffer.from('owner:test-password-long-enough').toString('base64') } });
     assert.equal(right.status, 200);
   });
 });
 
 test('the gate protects the endpoints that spend money', async () => {
-  await withServer(baseOverrides({ accessToken: 's3cret-token' }), async ({ baseUrl }) => {
+  await withServer(baseOverrides({ auth: { username: 'owner', password: 'test-password-long-enough' } }), async ({ baseUrl }) => {
     const generate = await fetch(`${baseUrl}/api/courses/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -81,11 +81,11 @@ test('the gate protects the endpoints that spend money', async () => {
   });
 });
 
-test('readiness and the root endpoint stay reachable without a token', async () => {
-  await withServer(baseOverrides({ accessToken: 's3cret-token' }), async ({ baseUrl }) => {
+test('readiness stays public while the root requires login', async () => {
+  await withServer(baseOverrides({ auth: { username: 'owner', password: 'test-password-long-enough' } }), async ({ baseUrl }) => {
     // A platform health check cannot be expected to hold the secret.
     assert.equal((await fetch(`${baseUrl}/healthz`)).status, 503);
-    assert.equal((await fetch(`${baseUrl}/`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/`)).status, 401);
   });
 });
 
@@ -140,5 +140,50 @@ test('a rate-limited response advertises itself as retriable', async () => {
     message: 'Too many requests. Please wait and try again.',
     retriable: true,
   });
-  assert.equal(normalizeError(new HttpError(401, 'unauthorized', 'A valid API token is required')).retriable, false);
+  assert.equal(normalizeError(new HttpError(401, 'unauthorized', 'A valid app login is required')).retriable, false);
+});
+
+
+test('production fails closed without app credentials', () => {
+  const { createApp } = require('../../app');
+  assert.throws(() => createApp({ environment: 'production', auth: {} }), /Production requires/);
+});
+
+test('authenticated cross-origin mutations are rejected before generation', async () => {
+  await withServer(baseOverrides({ auth: { username: 'owner', password: 'test-password-long-enough' } }), async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/courses/generate`, {
+      method: 'POST', headers: {
+        Authorization: 'Basic ' + Buffer.from('owner:test-password-long-enough').toString('base64'),
+        Origin: 'https://attacker.example', 'Content-Type': 'application/json',
+      }, body: JSON.stringify({ topic: 'Rust' }),
+    });
+    assert.equal(response.status, 403);
+  });
+});
+
+test('production serves protected SPA deep links and assets, and API misses remain JSON', async () => {
+  const { mkdtemp, writeFile, rm } = require('node:fs/promises');
+  const { tmpdir } = require('node:os');
+  const path = require('node:path');
+  const staticDir = await mkdtemp(path.join(tmpdir(), 'ttl-static-'));
+  try {
+    await writeFile(path.join(staticDir, 'index.html'), '<html>app-shell</html>');
+    await writeFile(path.join(staticDir, 'app.js'), 'window.app = true');
+    await withServer(baseOverrides({ environment: 'production', staticDir,
+      auth: { username: 'owner', password: 'test-password-long-enough' } }), async ({ baseUrl }) => {
+      const headers = { Authorization: 'Basic ' + Buffer.from('owner:test-password-long-enough').toString('base64') };
+      for (const url of ['/', '/course/123', '/app.js']) {
+        const anonymous = await fetch(baseUrl + url);
+        assert.equal(anonymous.status, 401);
+        assert.match(anonymous.headers.get('www-authenticate'), /^Basic /);
+        const authenticated = await fetch(baseUrl + url, { headers });
+        assert.equal(authenticated.status, 200);
+        assert.match(await authenticated.text(), url.endsWith('.js') ? /window.app/ : /app-shell/);
+      }
+      const missing = await fetch(baseUrl + '/api/missing', { headers });
+      assert.equal(missing.status, 404);
+      assert.equal((await missing.json()).error.code, 'not_found');
+      assert.equal((await fetch(baseUrl + '/missing.js', { headers })).status, 404);
+    });
+  } finally { await rm(staticDir, { recursive: true, force: true }); }
 });

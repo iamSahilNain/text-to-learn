@@ -14,7 +14,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const GENERATED_DIRS = ['node_modules/', 'dist/', 'build/', 'coverage/', '.vite/']
-const ALLOWED_ENV_FILES = /(^|\/)\.env\.example$/
+const ALLOWED_ENV_FILES = /(^|\/)\.env\.(?:deploy\.)?example$/
 
 // Inline links and reference definitions. Images count too.
 const LINK_PATTERN = /!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)|^\s*\[[^\]]+\]:\s*(\S+)/gm

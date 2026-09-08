@@ -50,6 +50,7 @@ async function streamCoursePdf(course, res, { createPdfDocument = createDefaultP
   // an uncaught exception. The pipeline below is what reports it.
   doc.on('error', () => {});
 
+  let finished;
   try {
     renderCourse(doc, course);
   } catch (err) {
@@ -65,10 +66,14 @@ async function streamCoursePdf(course, res, { createPdfDocument = createDefaultP
     // A client disconnect destroys the response, which the pipeline
     // propagates back to the document: production stops rather than
     // rendering a whole course nobody is reading.
-    const finished = pipeline(doc, res);
+    finished = pipeline(doc, res);
     doc.end();
     await finished;
   } catch (err) {
+    // end() may throw after pipeline() starts. Tear down its producer and
+    // observe the pipeline rejection before propagating the original error.
+    doc.destroy(err);
+    if (finished) await finished.catch(() => {});
     clearPdfHeaders(res);
     throw err;
   }

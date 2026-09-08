@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { describe, expect, test } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -8,13 +9,15 @@ import { deferred, jsonResponse, mockFetch } from './helpers.jsx'
 
 function renderHome() {
   return render(
+    <StrictMode>
     <MemoryRouter initialEntries={['/']}>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/course/:courseId" element={<p>Course page</p>} />
         <Route path="/courses" element={<p>My Courses</p>} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </StrictMode>,
   )
 }
 

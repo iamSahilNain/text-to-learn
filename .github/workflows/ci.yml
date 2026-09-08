@@ -79,6 +79,22 @@ jobs:
           MONGO_URI_TEST: mongodb://127.0.0.1:27017/text_to_learn_test?replicaSet=rs0&directConnection=true
         run: npm --prefix server run test:integration
 
+      - name: Build deployment image
+        run: docker build -t text-to-learn:ci .
+
+      - name: Smoke test deployment image
+        run: |
+          docker run -d --name ttl-deploy-smoke --network host --read-only --tmpfs /tmp:size=64m --cap-drop ALL --security-opt no-new-privileges:true \
+            -e HOST=127.0.0.1 -e PORT=3101 -e CLIENT_ORIGIN=http://127.0.0.1:3101 \
+            -e APP_USERNAME=owner -e APP_PASSWORD=smoke-password-not-a-real-secret \
+            -e 'MONGO_URI=mongodb://127.0.0.1:27017/text_to_learn_smoke_test?replicaSet=rs0&directConnection=true' \
+            -e GEMINI_API_KEY=smoke-fake-key text-to-learn:ci
+          node scripts/smoke-deployment.mjs
+
+      - name: Stop deployment smoke container
+        if: always()
+        run: docker rm -f ttl-deploy-smoke || true
+
       - name: Stop MongoDB
         if: always()
         run: docker compose down
