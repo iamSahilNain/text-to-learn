@@ -1,1 +1,62 @@
 @import "tailwindcss";
+
+@theme {
+  --color-canvas: #0b1020;
+  --color-surface: #121a2b;
+  --color-surface-raised: #192338;
+  --color-border: #2b374d;
+  --color-text: #eef2ff;
+  --color-text-muted: #a5b0c5;
+  --color-accent: #a5b4fc;
+  --color-action: #4f46e5;
+  --color-action-hover: #4338ca;
+  --color-success: #86efac;
+  --color-warning: #fcd34d;
+  --color-danger: #fca5a5;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background-color: var(--color-canvas);
+  color: var(--color-text);
+}
+
+body {
+  min-width: 320px;
+}
+
+/* A long unbroken run (a URL, an inline code span) must wrap rather than
+   push the page wider than the viewport. Block code inside <pre> is
+   deliberately excluded -- it keeps its own horizontal scroll instead. */
+p,
+li,
+h1,
+h2,
+h3 {
+  overflow-wrap: anywhere;
+}
+
+/* min-height:100dvh with a min-height:100vh fallback for browsers without dvh */
+.app-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
