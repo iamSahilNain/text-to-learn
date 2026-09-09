@@ -27,7 +27,7 @@ describe('Home', () => {
     renderHome()
 
     await userEvent.type(screen.getByLabelText('Topic'), '  Rust ownership  ')
-    await userEvent.click(screen.getByRole('button', { name: 'Generate Course' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create outline' }))
 
     expect(await screen.findByText('Course page')).toBeInTheDocument()
     expect(fetchMock.calls).toHaveLength(1)
@@ -54,7 +54,7 @@ describe('Home', () => {
     renderHome()
 
     await userEvent.type(screen.getByLabelText('Topic'), 'Rust')
-    const button = screen.getByRole('button', { name: 'Generate Course' })
+    const button = screen.getByRole('button', { name: 'Create outline' })
     button.click()
     button.click()
     button.click()
@@ -68,7 +68,7 @@ describe('Home', () => {
     const fetchMock = mockFetch([['/api/courses/generate', async () => jsonResponse({ _id: 'c1' })]])
     renderHome()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate Course' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create outline' }))
     await userEvent.type(screen.getByLabelText('Topic'), '   {Enter}')
     expect(fetchMock.calls).toHaveLength(0)
   })
@@ -84,13 +84,13 @@ describe('Home', () => {
     renderHome()
 
     await userEvent.type(screen.getByLabelText('Topic'), 'Rust')
-    await userEvent.click(screen.getByRole('button', { name: 'Generate Course' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create outline' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Generation provider is unavailable')
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Generate Course' })).not.toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create outline' })).not.toBeDisabled())
     expect(screen.getByLabelText('Topic')).not.toBeDisabled()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate Course' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create outline' }))
     expect(await screen.findByText('Course page')).toBeInTheDocument()
     expect(fetchMock.calls).toHaveLength(2)
   })
@@ -100,7 +100,7 @@ describe('Home', () => {
     renderHome()
 
     await userEvent.type(screen.getByLabelText('Topic'), 'Rust')
-    await userEvent.click(screen.getByRole('button', { name: 'Generate Course' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create outline' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('unexpected course')
     expect(screen.queryByText('Course page')).not.toBeInTheDocument()
@@ -112,7 +112,7 @@ describe('Home', () => {
     const view = renderHome()
 
     await userEvent.type(screen.getByLabelText('Topic'), 'Rust')
-    await userEvent.click(screen.getByRole('button', { name: 'Generate Course' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create outline' }))
 
     view.unmount()
     slow.resolve(jsonResponse({ _id: 'c1' }))

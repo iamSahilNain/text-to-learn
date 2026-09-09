@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { fetchJson, invalidResponse, isValidCourseList } from '../api'
+import AppShell from '../components/AppShell'
+import { useDocumentTitle } from '../useDocumentTitle'
 
 const PAGE_SIZE = 20
+const VISIBLE_TAGS = 3
 
 export default function CoursesList() {
-  const navigate = useNavigate()
+  useDocumentTitle('Courses | Text to Learn')
   const [state, setState] = useState({
     courses: [],
     page: 1,
@@ -80,23 +83,20 @@ export default function CoursesList() {
   const showEmptyState = loadStatus === 'ready' && courses.length === 0
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white px-6 py-10 max-w-3xl mx-auto">
-      <button
-        onClick={() => navigate('/')}
-        className="text-indigo-400 hover:text-indigo-300 mb-8"
-      >
+    <AppShell width={960}>
+      <Link to="/" className="mb-8 inline-block text-accent transition hover:text-text">
         ← New course
-      </button>
-      <h1 className="text-3xl font-bold mb-8">My Courses</h1>
+      </Link>
+      <h1 className="mb-8 text-3xl font-bold text-text">Courses</h1>
 
-      {loading && <p className="text-gray-400 mb-4">Loading courses...</p>}
+      {loading && <p className="mb-4 text-text-muted">Loading courses...</p>}
 
       {loadStatus === 'error' && (
-        <div className="flex items-center justify-between gap-4 mb-6">
-          <p role="alert" className="text-red-400">{error}</p>
+        <div className="mb-6 flex items-center justify-between gap-4">
+          <p role="alert" className="text-danger">{error}</p>
           <button
             onClick={() => load(requestedPage)}
-            className="bg-gray-800 hover:bg-gray-700 text-gray-200 text-sm font-medium rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+            className="whitespace-nowrap rounded-lg bg-surface-raised px-3 py-1.5 text-sm font-medium text-text transition hover:bg-border"
           >
             Retry
           </button>
@@ -104,63 +104,70 @@ export default function CoursesList() {
       )}
 
       {showEmptyState && (
-        <p className="text-gray-400">
+        <p className="text-text-muted">
           {page === 1
             ? 'No courses yet — generate one from the home page.'
             : 'No courses on this page.'}
         </p>
       )}
 
-      <div className="space-y-3">
-        {courses.map((course) => (
-          <button
-            key={course._id}
-            onClick={() => navigate(`/course/${course._id}`)}
-            className="w-full text-left bg-gray-900 hover:bg-gray-800 rounded-xl px-5 py-4 transition"
-          >
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="font-semibold text-gray-100">{course.title}</p>
-                {course.description && (
-                  <p className="text-sm text-gray-400 mt-1 line-clamp-1">{course.description}</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {courses.map((course) => {
+          const visibleTags = course.tags?.slice(0, VISIBLE_TAGS) || []
+          const hiddenTagCount = (course.tags?.length || 0) - visibleTags.length
+          return (
+            <Link
+              key={course._id}
+              to={`/course/${course._id}`}
+              className="block rounded-xl bg-surface px-5 py-4 transition hover:bg-surface-raised"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <p className="font-semibold text-text">{course.title}</p>
+                {course.createdAt && (
+                  <p className="whitespace-nowrap text-xs text-text-muted">
+                    {new Date(course.createdAt).toLocaleDateString()}
+                  </p>
                 )}
               </div>
-              {course.createdAt && (
-                <p className="text-xs text-gray-500 whitespace-nowrap">
-                  {new Date(course.createdAt).toLocaleDateString()}
-                </p>
+              {course.description && (
+                <p className="mt-1 line-clamp-2 text-sm text-text-muted">{course.description}</p>
               )}
-            </div>
-            {course.tags?.length > 0 && (
-              <div className="flex gap-2 mt-2 flex-wrap">
-                {course.tags.map((tag) => (
-                  <span key={tag} className="bg-indigo-900 text-indigo-200 px-2 py-0.5 rounded-full text-xs">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-          </button>
-        ))}
+              {visibleTags.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {visibleTags.map((tag) => (
+                    <span key={tag} className="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
+                      {tag}
+                    </span>
+                  ))}
+                  {hiddenTagCount > 0 && (
+                    <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs text-text-muted">
+                      +{hiddenTagCount}
+                    </span>
+                  )}
+                </div>
+              )}
+            </Link>
+          )
+        })}
       </div>
 
-      <div className="flex items-center justify-between mt-8">
+      <div className="mt-8 flex items-center justify-between">
         <button
           onClick={() => load(page - 1)}
           disabled={loading || page <= 1}
-          className="bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-200 text-sm font-medium rounded-lg px-4 py-2 transition"
+          className="rounded-lg bg-surface-raised px-4 py-2 text-sm font-medium text-text transition hover:bg-border disabled:opacity-40"
         >
           Previous
         </button>
-        <p className="text-sm text-gray-500">Page {page}</p>
+        <p className="text-sm text-text-muted">Page {page}</p>
         <button
           onClick={() => load(page + 1)}
           disabled={loading || !hasMore}
-          className="bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-200 text-sm font-medium rounded-lg px-4 py-2 transition"
+          className="rounded-lg bg-surface-raised px-4 py-2 text-sm font-medium text-text transition hover:bg-border disabled:opacity-40"
         >
           Next
         </button>
       </div>
-    </div>
+    </AppShell>
   )
 }
