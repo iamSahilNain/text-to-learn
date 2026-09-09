@@ -87,8 +87,10 @@ function writeBlock(write, block) {
     case 'mcq': {
       write('Q: ' + block.question, { size: 11, style: 'bold', gap: 2 })
       block.options?.forEach((opt, i) => {
-        const marker = i === block.answer ? '✓' : ' '
-        write(`${marker} ${i + 1}. ${opt}`, { size: 10, indent: 12, gap: 1 })
+        // jsPDF's built-in Helvetica has no glyph for U+2713; an ASCII
+        // marker renders correctly without embedding a font.
+        const suffix = i === block.answer ? '  [correct]' : ''
+        write(`${i + 1}. ${opt}${suffix}`, { size: 10, indent: 12, gap: 1 })
       })
       if (block.explanation) write('Explanation: ' + block.explanation, { size: 9, style: 'italic', color: [90, 90, 90], gap: 8 })
       return

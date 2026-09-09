@@ -1,30 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { API_URL, ApiError, fetchJson, invalidResponse, isValidCourse } from '../api'
 import { consumeCourseEvents } from '../sse'
 import { generationReducer, initialGenerationState } from '../generationReducer'
-
-// A module has no stored status. It is whatever its lessons say it is, and
-// an empty module is not a finished one.
-function moduleStatus(courseModule) {
-  const lessons = courseModule.lessons || []
-  if (lessons.length === 0) return 'empty'
-  if (lessons.some((lesson) => lesson.generationStatus === 'pending')) return 'pending'
-  if (lessons.some((lesson) => lesson.generationStatus === 'degraded')) return 'degraded'
-  return 'ready'
-}
-
-const LESSON_BADGE = {
-  pending: { text: 'Not generated', className: 'text-gray-500' },
-  ready: { text: 'Ready', className: 'text-green-400' },
-  degraded: { text: 'Fallback — retry available', className: 'text-amber-400' },
-}
-
-const MODULE_BADGE = {
-  pending: { text: 'Not generated', className: 'bg-gray-800 text-gray-400' },
-  ready: { text: 'Ready', className: 'bg-green-900 text-green-300' },
-  degraded: { text: 'Fallback', className: 'bg-amber-900 text-amber-200' },
-}
+import AppShell, { Centered } from '../components/AppShell'
+import ModuleList from '../components/ModuleList'
+import CourseProgress from '../components/CourseProgress'
+import { useDocumentTitle } from '../useDocumentTitle'
 
 export default function CoursePage() {
   const { courseId } = useParams()
@@ -41,6 +23,8 @@ export default function CoursePage() {
   const [loadAttempt, setLoadAttempt] = useState(0)
 
   const { course, loadStatus, loadError, generation } = state
+
+  useDocumentTitle(course ? `${course.title} | Text to Learn` : 'Text to Learn')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -173,25 +157,27 @@ export default function CoursePage() {
   }
 
   if (loadStatus === 'loading') return (
-    <Centered><p className="text-gray-400 text-xl">Loading course...</p></Centered>
+    <AppShell><Centered><p className="text-xl text-text-muted">Loading course...</p></Centered></AppShell>
   )
 
   if (loadStatus === 'not-found') return (
-    <Centered><p className="text-red-400 text-xl">Course not found</p></Centered>
+    <AppShell><Centered><p className="text-xl text-danger">Course not found</p></Centered></AppShell>
   )
 
   if (loadStatus === 'error') return (
-    <Centered>
-      <div className="text-center">
-        <p role="alert" className="text-red-400 text-xl mb-6">{loadError}</p>
-        <button
-          onClick={retryLoad}
-          className="bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg px-4 py-2 transition"
-        >
-          Retry
-        </button>
-      </div>
-    </Centered>
+    <AppShell>
+      <Centered>
+        <div className="text-center">
+          <p role="alert" className="mb-6 text-xl text-danger">{loadError}</p>
+          <button
+            onClick={retryLoad}
+            className="rounded-lg bg-action px-4 py-2 text-sm font-medium text-white transition hover:bg-action-hover"
+          >
+            Retry
+          </button>
+        </div>
+      </Centered>
+    </AppShell>
   )
 
   const generating = generation.status === 'generating'
@@ -201,26 +187,23 @@ export default function CoursePage() {
   const startLabel = degradedCount > 0 && pendingCount === 0 ? 'Retry incomplete lessons' : 'Generate full course'
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white px-6 py-10 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
-        <button
-          onClick={() => navigate('/')}
-          className="text-indigo-400 hover:text-indigo-300 flex items-center gap-2"
-        >
+    <AppShell>
+      <div className="mb-8 flex items-center justify-between">
+        <Link to="/" className="flex items-center gap-2 text-accent transition hover:text-text">
           ← Back
-        </button>
+        </Link>
         <div className="flex gap-2">
           {generating ? (
             <button
               onClick={handleCancel}
-              className="bg-red-900 hover:bg-red-800 text-red-100 text-sm font-medium rounded-lg px-4 py-2 transition"
+              className="rounded-lg bg-danger/15 px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/25"
             >
               Cancel generation
             </button>
           ) : (
             <button
               onClick={startGeneration}
-              className="bg-indigo-700 hover:bg-indigo-600 text-white text-sm font-medium rounded-lg px-4 py-2 transition"
+              className="rounded-lg bg-action px-4 py-2 text-sm font-medium text-white transition hover:bg-action-hover"
             >
               {startLabel}
             </button>
@@ -228,41 +211,41 @@ export default function CoursePage() {
           <button
             onClick={handleExport}
             disabled={exporting}
-            className="bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-200 text-sm font-medium rounded-lg px-4 py-2 transition"
+            className="rounded-lg bg-surface-raised px-4 py-2 text-sm font-medium text-text transition hover:bg-border disabled:opacity-50"
           >
             {exporting ? 'Exporting...' : 'Export PDF'}
           </button>
         </div>
       </div>
 
-      {exportError && <p role="alert" className="text-red-400 mb-6 text-sm">{exportError}</p>}
+      {exportError && <p role="alert" className="mb-6 text-sm text-danger">{exportError}</p>}
 
       {course.outlineStatus === 'degraded' && (
-        <div className="bg-amber-950 border border-amber-900 text-amber-200 rounded-xl p-4 mb-6 text-sm">
+        <div className="mb-6 rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning">
           This course outline is fallback content. Generating lessons will not replace it — create a new
           course to try the outline again.
         </div>
       )}
 
       {generation.status !== 'idle' && (
-        <div className="bg-gray-900 rounded-xl p-4 mb-8 text-sm">
+        <div className="mb-8 rounded-xl bg-surface p-4 text-sm">
           {generating && (
-            <p className="text-indigo-300">
+            <p className="text-accent">
               Processed {generation.receivedModuleIds.length} of {course.modules.length} modules…
             </p>
           )}
           {generation.status === 'complete' && (
-            <p className="text-green-400">All {generation.summary.totalLessons} lessons are ready.</p>
+            <p className="text-success">All {generation.summary.totalLessons} lessons are ready.</p>
           )}
           {generation.status === 'degraded' && (
             <div className="flex items-center justify-between gap-4">
-              <p className="text-amber-300">
+              <p className="text-warning">
                 {generation.summary.readyLessons} of {generation.summary.totalLessons} lessons are ready.{' '}
                 {generation.summary.degradedLessons} lessons contain fallback content.
               </p>
               <button
                 onClick={startGeneration}
-                className="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                className="whitespace-nowrap rounded-lg bg-surface-raised px-3 py-1.5 text-xs font-medium text-text transition hover:bg-border"
               >
                 Retry incomplete lessons
               </button>
@@ -270,20 +253,20 @@ export default function CoursePage() {
           )}
           {generation.status === 'error' && (
             <div className="flex items-center justify-between gap-4">
-              <p role="alert" className="text-red-400">
+              <p role="alert" className="text-danger">
                 Generation stopped: {generation.error.message}
               </p>
               {generation.error.retriable ? (
                 <button
                   onClick={startGeneration}
-                  className="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                  className="whitespace-nowrap rounded-lg bg-surface-raised px-3 py-1.5 text-xs font-medium text-text transition hover:bg-border"
                 >
                   Retry
                 </button>
               ) : (
                 <button
                   onClick={() => navigate('/courses')}
-                  className="bg-gray-800 hover:bg-gray-700 text-gray-200 text-xs font-medium rounded-lg px-3 py-1.5 transition whitespace-nowrap"
+                  className="whitespace-nowrap rounded-lg bg-surface-raised px-3 py-1.5 text-xs font-medium text-text transition hover:bg-border"
                 >
                   Back to my courses
                 </button>
@@ -293,46 +276,20 @@ export default function CoursePage() {
         </div>
       )}
 
-      <h1 className="text-4xl font-bold mb-3">{course.title}</h1>
-      <p className="text-gray-400 mb-4">{course.description}</p>
-      <div className="flex gap-2 mb-10 flex-wrap">
+      <h1 className="mb-3 text-4xl font-bold text-text">{course.title}</h1>
+      <p className="mb-4 text-text-muted">{course.description}</p>
+      <div className="mb-8 flex flex-wrap gap-2">
         {course.tags?.map((tag) => (
-          <span key={tag} className="bg-indigo-900 text-indigo-200 px-3 py-1 rounded-full text-sm">
+          <span key={tag} className="rounded-full bg-accent/15 px-3 py-1 text-sm text-accent">
             {tag}
           </span>
         ))}
       </div>
-      <div className="space-y-6">
-        {course.modules.map((courseModule, moduleIndex) => {
-          const badge = MODULE_BADGE[moduleStatus(courseModule)]
-          return (
-            <div key={courseModule._id} className="bg-gray-900 rounded-2xl p-6">
-              <h2 className="text-xl font-semibold mb-4 text-indigo-300 flex items-center gap-2">
-                Module {moduleIndex + 1}: {courseModule.title}
-                {badge && (
-                  <span className={`text-xs rounded-full px-2 py-0.5 ${badge.className}`}>{badge.text}</span>
-                )}
-              </h2>
-              <div className="space-y-2">
-                {courseModule.lessons.map((lesson, lessonIndex) => {
-                  const lessonBadge = LESSON_BADGE[lesson.generationStatus]
-                  return (
-                    <button
-                      key={lesson._id}
-                      onClick={() => navigate(`/lesson/${lesson._id}`)}
-                      className="w-full text-left bg-gray-800 hover:bg-gray-700 rounded-xl px-4 py-3 text-gray-200 transition flex items-center justify-between"
-                    >
-                      <span>{lessonIndex + 1}. {lesson.title}</span>
-                      <span className={`text-xs ${lessonBadge.className}`}>{lessonBadge.text}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
+
+      <CourseProgress modules={course.modules} />
+
+      <ModuleList modules={course.modules} lessonHref={(lesson) => `/lesson/${lesson._id}`} />
+    </AppShell>
   )
 }
 
@@ -347,12 +304,4 @@ function summaryProblem(summary, courseId, course) {
   const expected = course ? course.modules.reduce((total, entry) => total + entry.lessons.length, 0) : totalLessons
   if (totalLessons !== expected) return 'The server reported a different lesson count.'
   return null
-}
-
-function Centered({ children }) {
-  return (
-    <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
-      {children}
-    </div>
-  )
 }

@@ -8,6 +8,9 @@ const { LESSON_OPERATION_TOTAL_MS } = require('../services/lessonGeneration');
 // One lesson request: generation, enrichment and the checks around its
 // single write.
 const LESSON_REQUEST_TOTAL_MS = LESSON_OPERATION_TOTAL_MS;
+// Bounds the additive module lookup below so a stalled database cannot hang
+// an otherwise-ordinary lesson read.
+const MODULE_LOOKUP_TIMEOUT_MS = 5_000;
 
 function createLessonRouter({ models, lessonGenerator, timeouts = {}, limiters }) {
   const router = express.Router();
@@ -19,7 +22,16 @@ function createLessonRouter({ models, lessonGenerator, timeouts = {}, limiters }
     try {
       const lesson = await Lesson.findById(req.params.id);
       if (!lesson) return sendError(res, 404, 'not_found', 'Lesson not found');
-      res.json(serializeLesson(lesson));
+      const serialized = serializeLesson(lesson);
+      // Additive only: a narrow, bounded read of the lesson's own module so
+      // the client can build a deterministic parent-course link without a
+      // second, unauthenticated lookup. The existing module field is
+      // untouched.
+      const courseModule = await Module.findById(lesson.module)
+        .select('course')
+        .maxTimeMS(MODULE_LOOKUP_TIMEOUT_MS);
+      if (courseModule?.course) serialized.courseId = String(courseModule.course);
+      res.json(serialized);
     } catch (err) {
       next(err);
     }
@@ -52,7 +64,11 @@ function createLessonRouter({ models, lessonGenerator, timeouts = {}, limiters }
       });
 
       context.complete();
-      res.json(serializeLesson(saved));
+      // Same additive field the GET route carries: course._id is already in
+      // hand here, so this is not a second lookup. Without it, a client that
+      // replaces its lesson with this response loses the parent-course link
+      // it started with.
+      res.json({ ...serializeLesson(saved), courseId: String(course._id) });
     } catch (err) {
       next(err);
     } finally {

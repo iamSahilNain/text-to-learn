@@ -61,3 +61,28 @@ balance) stop immediately. Rate limits and server failures use bounded retries.
 Empty, truncated or schema-invalid output gets one repair round, then a clearly
 labelled degraded fallback. Live course quality and provider latency still need
 testing with your key. [DeepSeek API contract](https://api-docs.deepseek.com/api/create-chat-completion/).
+
+## Public demo deployment
+
+The client build has two modes, chosen by `VITE_APP_MODE` at build time (see
+`client/.env.example`): `private` (default) mounts the full app against this
+repository's authenticated API, and `demo` mounts only the homepage and the
+curated `/demo/react-fundamentals` sample -- no `/api` call, model provider or
+database read happens in a demo build. This is presentation only; it is never
+an authorization boundary. An invalid, non-empty value fails the build.
+
+`vercel.json` at the repository root builds the client with
+`VITE_APP_MODE=demo` and serves `client/dist` as a static SPA, with `/api/*`
+excluded from the SPA rewrite so a stray API-shaped request 404s instead of
+silently receiving `index.html`.
+
+**Known gap, not yet verified by this change:** a separate Vercel project
+(`text-to-learn-seven.vercel.app`) already exists and was observed serving
+course/lesson data anonymously -- inconsistent with this repository's access
+contract (see `server/middleware/accessControl.js`). Its actual build
+command, output directory, root directory and environment variables have not
+been inspected here, since that requires the Vercel dashboard. Before
+treating the public demo as live, the project owner needs to either point
+that Vercel project at `vercel.json` above (mode `demo`, no database or
+provider keys, no API proxy) or replace it with a fresh project configured
+that way, and confirm the old anonymous data path is gone.

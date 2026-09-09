@@ -57,8 +57,8 @@ async function renderWithTotal(total) {
 }
 
 function cardTitles() {
-  return screen.getAllByRole('button')
-    .map((button) => button.textContent)
+  return screen.getAllByRole('link')
+    .map((link) => link.textContent)
     .filter((text) => text.startsWith('Course '))
 }
 

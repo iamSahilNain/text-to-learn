@@ -29,11 +29,14 @@ function lessonDocument(overrides = {}) {
 }
 
 // Minimal stand-ins for the Mongoose model surface the routes actually use.
+// Chainable (via queryReturning) so a handler that adds .select/.maxTimeMS
+// keeps working here exactly as a real Mongoose Query would -- awaiting the
+// return value resolves the same way whether or not anything chained off it.
 function fakeModels({ lesson, courseModule, course }) {
   return {
-    Lesson: { findById: async (id) => (lesson && String(lesson._id) === String(id) ? lesson : null) },
-    Module: { findById: async (id) => (courseModule && String(courseModule._id) === String(id) ? courseModule : null) },
-    Course: { findById: async (id) => (course && String(course._id) === String(id) ? course : null) },
+    Lesson: { findById: (id) => queryReturning(lesson && String(lesson._id) === String(id) ? lesson : null) },
+    Module: { findById: (id) => queryReturning(courseModule && String(courseModule._id) === String(id) ? courseModule : null) },
+    Course: { findById: (id) => queryReturning(course && String(course._id) === String(id) ? course : null) },
   };
 }
 
@@ -54,6 +57,59 @@ test('GET /api/lessons/:id returns an effective status for a legacy lesson', asy
     const body = await response.json();
     assert.equal(body.generationStatus, 'ready');
     assert.equal(body.enrichmentStatus, 'pending');
+  });
+});
+
+test('GET /api/lessons/:id carries the lesson\'s courseId, derived from its module', async () => {
+  const lesson = lessonDocument({ content: [{ type: 'paragraph', text: 'Real content.' }] });
+  const overrides = {
+    models: fakeModels({
+      lesson,
+      courseModule: { _id: 'module-1', title: 'Basics', course: 'course-1' },
+      course: { _id: 'course-1', title: 'Rust' },
+    }),
+  };
+  await withServer(overrides, async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/lessons/lesson-1`);
+    const body = await response.json();
+    assert.equal(body.courseId, 'course-1');
+    // The existing module reference is untouched by the addition.
+    assert.equal(body.module, 'module-1');
+  });
+});
+
+test('GET /api/lessons/:id looks up the module with a field-limited, time-bounded query', async () => {
+  const lesson = lessonDocument({ content: [{ type: 'paragraph', text: 'Real content.' }] });
+  let selectArg;
+  let maxTimeArg;
+  const models = {
+    Lesson: { findById: async (id) => (String(lesson._id) === String(id) ? lesson : null) },
+    Module: {
+      findById: (id) => ({
+        select(fields) { selectArg = fields; return this; },
+        maxTimeMS(ms) { maxTimeArg = ms; return this; },
+        then(resolve) { resolve(String(id) === 'module-1' ? { _id: 'module-1', course: 'course-1' } : null); },
+      }),
+    },
+    Course: { findById: async () => null },
+  };
+
+  await withServer({ models }, async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/lessons/lesson-1`);
+    const body = await response.json();
+    assert.equal(body.courseId, 'course-1');
+    assert.equal(selectArg, 'course');
+    assert.equal(typeof maxTimeArg, 'number');
+    assert.ok(maxTimeArg > 0);
+  });
+});
+
+test('GET /api/lessons/:id omits courseId when the lesson\'s module cannot be found', async () => {
+  const lesson = lessonDocument({ content: [{ type: 'paragraph', text: 'Real content.' }] });
+  await withServer({ models: fakeModels({ lesson }) }, async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/lessons/lesson-1`);
+    const body = await response.json();
+    assert.equal('courseId' in body, false);
   });
 });
 
@@ -93,6 +149,35 @@ test('POST /api/lessons/:id/generate works with no body and with {}', async () =
       const body = await response.json();
       assert.equal(body.generationStatus, 'ready');
       assert.equal(lesson.saves, 1);
+    });
+  }
+});
+
+test('POST /api/lessons/:id/generate carries courseId, so a client replacing its lesson with this response keeps its parent link', async () => {
+  const pending = lessonDocument();
+  const degraded = lessonDocument({
+    generationStatus: 'degraded',
+    content: [{ type: 'paragraph', text: 'Fallback body.' }],
+  });
+
+  for (const lesson of [pending, degraded]) {
+    const overrides = {
+      models: fakeModels({
+        lesson,
+        courseModule: { _id: 'module-1', title: 'Basics', course: 'course-1' },
+        course: { _id: 'course-1', title: 'Rust' },
+      }),
+      generateLessonSafe: async () => ({
+        value: { title: 'Ownership', objectives: [], content: [{ type: 'paragraph', text: 'Fresh body.' }] },
+        generationStatus: 'ready',
+      }),
+      searchVideos: async () => ({ videos: [], enrichmentStatus: 'no_key' }),
+    };
+
+    await withServer(overrides, async ({ baseUrl }) => {
+      const response = await fetch(`${baseUrl}/api/lessons/lesson-1/generate`, { method: 'POST' });
+      const body = await response.json();
+      assert.equal(body.courseId, 'course-1', `expected courseId on the response for a ${lesson.generationStatus} lesson`);
     });
   }
 });
