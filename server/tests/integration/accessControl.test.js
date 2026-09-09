@@ -81,6 +81,60 @@ test('the gate protects the endpoints that spend money', async () => {
   });
 });
 
+test('the gate protects PDF export and lesson generation too, with zero provider calls or writes when rejected', async () => {
+  let lessonGenerateCalls = 0;
+  let videoSearchCalls = 0;
+  let lessonSaves = 0;
+  const lesson = {
+    _id: 'lesson-1', title: 'Ownership', objectives: [], content: [], videos: [],
+    generationStatus: 'pending', module: 'module-1',
+    async save() { lessonSaves += 1; return this; },
+  };
+  const overrides = baseOverrides({
+    auth: { username: 'owner', password: 'test-password-long-enough' },
+    models: {
+      Course: { findById: () => queryReturning(COURSE), find: () => queryReturning([]) },
+      Module: { findById: () => queryReturning({ _id: 'module-1', title: 'Basics', course: 'course-1' }) },
+      Lesson: { findById: () => queryReturning(lesson) },
+    },
+    generateLessonSafe: async () => {
+      lessonGenerateCalls += 1;
+      return {
+        value: { title: 'Ownership', objectives: [], content: [{ type: 'paragraph', text: 'x' }] },
+        generationStatus: 'ready',
+      };
+    },
+    searchVideos: async () => {
+      videoSearchCalls += 1;
+      return { videos: [], enrichmentStatus: 'no_key' };
+    },
+  });
+
+  await withServer(overrides, async ({ baseUrl }) => {
+    assert.equal((await fetch(`${baseUrl}/api/courses/course-1/pdf`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/lessons/lesson-1`)).status, 401);
+    assert.equal((await fetch(`${baseUrl}/api/lessons/lesson-1/generate`, { method: 'POST' })).status, 401);
+
+    assert.equal(lessonGenerateCalls, 0, 'a rejected request must never reach the model provider');
+    assert.equal(videoSearchCalls, 0, 'a rejected request must never reach the video provider');
+    assert.equal(lessonSaves, 0, 'a rejected request must never persist a write');
+
+    const headers = { Authorization: 'Basic ' + Buffer.from('owner:test-password-long-enough').toString('base64') };
+
+    const pdfOk = await fetch(`${baseUrl}/api/courses/course-1/pdf`, { headers });
+    assert.equal(pdfOk.status, 200);
+    assert.equal(pdfOk.headers.get('content-type'), 'application/pdf');
+    await pdfOk.arrayBuffer();
+
+    assert.equal((await fetch(`${baseUrl}/api/lessons/lesson-1`, { headers })).status, 200);
+
+    const lessonGenerateOk = await fetch(`${baseUrl}/api/lessons/lesson-1/generate`, { method: 'POST', headers });
+    assert.equal(lessonGenerateOk.status, 200);
+    assert.equal(lessonGenerateCalls, 1, 'valid auth reaches the handler');
+    assert.equal(lessonSaves, 1);
+  });
+});
+
 test('readiness stays public while the root requires login', async () => {
   await withServer(baseOverrides({ auth: { username: 'owner', password: 'test-password-long-enough' } }), async ({ baseUrl }) => {
     // A platform health check cannot be expected to hold the secret.
