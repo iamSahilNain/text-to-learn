@@ -8,7 +8,7 @@ export default function InlineText({ text }) {
         token.type === 'code' ? (
           <code
             key={index}
-            className="rounded border border-border bg-surface-raised px-1.5 py-0.5 font-mono text-[0.9em] [overflow-wrap:anywhere]"
+            className="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[0.85em] text-text [overflow-wrap:anywhere]"
           >
             {token.text}
           </code>

@@ -5,26 +5,28 @@ export default function LessonBlock({ block }) {
   switch (block.type) {
     case 'heading':
       return (
-        <h2 className="text-2xl font-semibold text-text">
+        <h2 className="mt-10 text-[1.75rem] leading-snug text-text first:mt-0">
           <InlineText text={block.text} />
         </h2>
       )
     case 'paragraph':
       return (
-        <p className="leading-relaxed text-text-muted">
+        <p className="font-serif text-[1.0625rem] leading-[1.75] text-text sm:text-lg">
           <InlineText text={block.text} />
         </p>
       )
     case 'code':
       return (
-        <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="overflow-hidden rounded-md bg-code-bg text-code-text">
           {block.language && (
-            <div className="border-b border-border px-4 py-1.5 text-xs text-text-muted">{block.language}</div>
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-1.5 font-mono text-xs text-code-muted">
+              <span>{block.language}</span>
+            </div>
           )}
           {/* Code blocks are never passed through InlineText: their text is
               retained exactly, with no inline-backtick parsing. */}
-          <pre className="overflow-x-auto p-4 text-sm">
-            <code className="font-mono text-success">{block.text}</code>
+          <pre className="overflow-x-auto p-4 text-[13.5px] leading-relaxed">
+            <code className="font-mono">{block.text}</code>
           </pre>
         </div>
       )

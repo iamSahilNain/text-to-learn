@@ -11,12 +11,12 @@ export default function LessonBody({ lesson, readOnly = false, generating = fals
   return (
     <>
       {!readOnly && status === 'degraded' && (
-        <div className="mb-8 flex items-center justify-between gap-4 rounded-xl border border-warning/30 bg-warning/10 p-4">
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4 rounded-md border border-warning/40 bg-warning/10 p-4">
           <p className="text-sm text-warning">Fallback content — generation could not complete.</p>
           <button
             onClick={onGenerate}
             disabled={generating}
-            className="whitespace-nowrap rounded-lg bg-warning/20 px-4 py-2 text-sm font-medium text-warning transition hover:bg-warning/30 disabled:opacity-50"
+            className="whitespace-nowrap rounded-md border border-warning px-4 py-2 text-sm font-medium text-warning transition hover:bg-warning/15 disabled:opacity-50"
           >
             {generating ? 'Generating content...' : 'Retry generation'}
           </button>
@@ -24,12 +24,17 @@ export default function LessonBody({ lesson, readOnly = false, generating = fals
       )}
 
       {lesson.objectives?.length > 0 && (
-        <div className="mb-8 rounded-xl border border-border bg-surface p-5">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-accent">Learning objectives</h2>
-          <ul className="list-inside list-disc space-y-1 text-text-muted">
+        <div className="mb-10 border-y border-border py-5">
+          <h2 className="font-sans text-sm font-medium text-accent">Learning objectives</h2>
+          <ul className="mt-3 space-y-1.5 font-serif text-[1.0625rem] text-text">
             {lesson.objectives.map((objective, index) => (
-              <li key={index}>
-                <InlineText text={objective} />
+              <li key={index} className="flex gap-3">
+                <span aria-hidden="true" className="text-text-muted">
+                  —
+                </span>
+                <span>
+                  <InlineText text={objective} />
+                </span>
               </li>
             ))}
           </ul>
@@ -37,13 +42,13 @@ export default function LessonBody({ lesson, readOnly = false, generating = fals
       )}
 
       {status === 'pending' ? (
-        <div className="py-20 text-center">
-          <p className="mb-6 text-text-muted">No content yet for this lesson.</p>
+        <div className="rounded-lg border border-dashed border-border py-16 text-center">
+          <p className="text-text-muted">No content yet for this lesson.</p>
           {!readOnly && (
             <button
               onClick={onGenerate}
               disabled={generating}
-              className="rounded-xl bg-action px-8 py-4 font-semibold text-white transition hover:bg-action-hover disabled:opacity-60"
+              className="mt-6 rounded-md bg-action px-6 py-3 font-medium text-white transition hover:bg-action-hover disabled:opacity-60"
             >
               {generating ? 'Generating content...' : 'Generate Lesson Content'}
             </button>
@@ -51,22 +56,22 @@ export default function LessonBody({ lesson, readOnly = false, generating = fals
         </div>
       ) : (
         <>
-          <div className="space-y-6">
+          <div className="space-y-5">
             {lesson.content.map((block, index) => (
               <LessonBlock key={index} block={block} />
             ))}
           </div>
           {lesson.videos?.length > 0 && (
-            <div className="mt-10">
-              <h2 className="mb-4 text-2xl font-semibold text-text">Related videos</h2>
-              <div className="grid gap-4 sm:grid-cols-2">
+            <div className="mt-12 border-t border-border pt-8">
+              <h2 className="text-2xl text-text">Related videos</h2>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 {lesson.videos.map((video) => (
                   <a
                     key={video.videoId}
                     href={video.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block overflow-hidden rounded-xl border border-border bg-surface transition hover:ring-2 hover:ring-accent"
+                    className="block overflow-hidden rounded-md border border-border bg-surface transition hover:border-text/50"
                   >
                     {video.thumbnail && <img src={video.thumbnail} alt="" className="w-full" />}
                     <div className="p-3">

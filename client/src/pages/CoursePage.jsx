@@ -187,7 +187,7 @@ export default function CoursePage() {
   const startLabel = degradedCount > 0 && pendingCount === 0 ? 'Retry incomplete lessons' : 'Generate full course'
 
   return (
-    <AppShell>
+    <AppShell width={960}>
       <div className="mb-8 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2 text-accent transition hover:text-text">
           ← Back
@@ -278,13 +278,9 @@ export default function CoursePage() {
 
       <h1 className="mb-3 text-4xl font-bold text-text">{course.title}</h1>
       <p className="mb-4 text-text-muted">{course.description}</p>
-      <div className="mb-8 flex flex-wrap gap-2">
-        {course.tags?.map((tag) => (
-          <span key={tag} className="rounded-full bg-accent/15 px-3 py-1 text-sm text-accent">
-            {tag}
-          </span>
-        ))}
-      </div>
+      {course.tags?.length > 0 && (
+        <p className="mb-8 text-sm text-text-muted">{course.tags.join(' · ')}</p>
+      )}
 
       <CourseProgress modules={course.modules} />
 

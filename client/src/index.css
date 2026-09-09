@@ -1,18 +1,28 @@
 @import "tailwindcss";
 
+/* Warm paper and ink. One saturated accent (terracotta) for links and
+   emphasis; the primary action is plain ink. Code blocks are the only dark
+   surfaces on the page, so they read as set-apart objects. */
 @theme {
-  --color-canvas: #0b1020;
-  --color-surface: #121a2b;
-  --color-surface-raised: #192338;
-  --color-border: #2b374d;
-  --color-text: #eef2ff;
-  --color-text-muted: #a5b0c5;
-  --color-accent: #a5b4fc;
-  --color-action: #4f46e5;
-  --color-action-hover: #4338ca;
-  --color-success: #86efac;
-  --color-warning: #fcd34d;
-  --color-danger: #fca5a5;
+  --color-canvas: #f3ede3;
+  --color-surface: #fbf8f2;
+  --color-surface-raised: #e9e1d2;
+  --color-border: #d3c7b2;
+  --color-text: #1d1a16;
+  --color-text-muted: #6b6257;
+  --color-accent: #a3462a;
+  --color-action: #1d1a16;
+  --color-action-hover: #3d352d;
+  --color-success: #2f6a3c;
+  --color-warning: #8d6210;
+  --color-danger: #a12f28;
+  --color-code-bg: #1f1b17;
+  --color-code-text: #efe6d5;
+  --color-code-muted: #9a8b74;
+
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Charter, Georgia, "Times New Roman", serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 html,
@@ -26,6 +36,19 @@ body,
 
 body {
   min-width: 320px;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings and long-form prose are set in the serif; UI chrome stays sans. */
+h1,
+h2,
+h3,
+.font-serif {
+  font-family: var(--font-serif);
+  letter-spacing: -0.01em;
 }
 
 /* A long unbroken run (a URL, an inline code span) must wrap rather than

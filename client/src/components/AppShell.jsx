@@ -4,39 +4,59 @@ const REPO_URL = 'https://github.com/iamSahilNain/text-to-learn'
 const DEMO_COURSE_PATH = '/demo/react-fundamentals'
 
 // Every page -- including loading and error states -- renders inside this
-// shell, so the dark background and header are never re-declared per page.
+// shell, so the background, header and footer are never re-declared per page.
 export default function AppShell({ children, width = 1120 }) {
   return (
     <div className="app-shell flex flex-col bg-canvas text-text">
-      <header className="border-b border-border">
+      <header className="sticky top-0 z-10 border-b border-border bg-canvas/90 backdrop-blur">
         <div
-          className="mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6"
-          style={{ maxWidth: 1120 }}
+          className="mx-auto flex flex-wrap items-center justify-between gap-3 px-5 py-3 sm:px-8"
+          style={{ maxWidth: 1180 }}
         >
-          <Link to="/" className="font-semibold tracking-tight text-text transition hover:text-accent">
+          <Link to="/" className="font-serif text-xl text-text transition hover:text-accent">
             Text to Learn
           </Link>
-          <nav className="flex items-center gap-5 text-sm">
-            <Link to={DEMO_COURSE_PATH} className="text-text-muted transition hover:text-accent">
+          <nav className="flex items-center gap-1 text-sm">
+            {/* The sample is the only thing a visitor can open with no key and
+                no login, so it is a visible control, not a muted link. */}
+            <Link
+              to={DEMO_COURSE_PATH}
+              className="rounded-md border border-text/25 px-3 py-1.5 font-medium text-text transition hover:border-text hover:bg-surface"
+            >
               Sample course
             </Link>
             <a
               href={REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-text-muted transition hover:text-accent"
+              className="rounded-md px-3 py-1.5 text-text-muted transition hover:text-text"
             >
               GitHub
             </a>
           </nav>
         </div>
       </header>
-      <main
-        className="mx-auto w-full flex-1 px-4 py-8 sm:px-6 sm:py-12"
-        style={{ maxWidth: width }}
-      >
+
+      <main className="mx-auto w-full flex-1 px-5 py-10 sm:px-8 sm:py-14" style={{ maxWidth: width }}>
         {children}
       </main>
+
+      <footer className="border-t border-border">
+        <div
+          className="mx-auto flex flex-wrap items-center justify-between gap-3 px-5 py-6 text-sm text-text-muted sm:px-8"
+          style={{ maxWidth: 1180 }}
+        >
+          <span className="font-serif text-base text-text">Text to Learn</span>
+          <div className="flex items-center gap-5">
+            <Link to={DEMO_COURSE_PATH} className="transition hover:text-text">
+              Sample course
+            </Link>
+            <a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="transition hover:text-text">
+              Source
+            </a>
+          </div>
+        </div>
+      </footer>
     </div>
   )
 }

@@ -119,7 +119,7 @@ export default function CoursesList() {
             <Link
               key={course._id}
               to={`/course/${course._id}`}
-              className="block rounded-xl bg-surface px-5 py-4 transition hover:bg-surface-raised"
+              className="block rounded-lg border border-border bg-surface px-5 py-4 transition hover:border-text/50"
             >
               <div className="flex items-start justify-between gap-4">
                 <p className="font-semibold text-text">{course.title}</p>
@@ -135,7 +135,7 @@ export default function CoursesList() {
               {visibleTags.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-2">
                   {visibleTags.map((tag) => (
-                    <span key={tag} className="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent">
+                    <span key={tag} className="rounded border border-border px-2 py-0.5 text-xs text-text-muted">
                       {tag}
                     </span>
                   ))}

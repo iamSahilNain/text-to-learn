@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
@@ -125,7 +125,10 @@ describe('demo lessons', () => {
     await userEvent.click(screen.getByRole('button', { name: new RegExp(`^1\\. ${firstMcq.options[0]}`) }))
     expect(screen.getByText(/Correct!|Not quite\./)).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('link', { name: new RegExp(second.title) }))
+    // The course outline sidebar also links every lesson, so scope to the
+    // Previous/Next region specifically.
+    const lessonNav = screen.getByRole('navigation', { name: 'Lesson navigation' })
+    await userEvent.click(within(lessonNav).getByRole('link', { name: new RegExp(second.title) }))
     await waitFor(() => expect(screen.getByRole('heading', { name: second.title, level: 1 })).toBeInTheDocument())
     expect(screen.queryByText(/Correct!|Not quite\./)).not.toBeInTheDocument()
   })
@@ -139,13 +142,17 @@ describe('demo lessons', () => {
     await screen.findByRole('heading', { name: firstLesson.title, level: 1 })
     expect(getAdjacentDemoLessons(firstLesson.slug).previous).toBeNull()
     const { next: firstNext } = getAdjacentDemoLessons(firstLesson.slug)
-    expect(screen.getByText(`${firstNext.title} →`)).toBeInTheDocument()
+    let lessonNav = screen.getByRole('navigation', { name: 'Lesson navigation' })
+    expect(within(lessonNav).queryByRole('link', { name: /Previous/ })).not.toBeInTheDocument()
+    expect(within(lessonNav).getByRole('link', { name: new RegExp(firstNext.title) })).toBeInTheDocument()
     firstView.unmount()
 
     renderDemo(demoLessonPath(lastLesson))
     await screen.findByRole('heading', { name: lastLesson.title, level: 1 })
     const { previous: lastPrevious, next: lastNext } = getAdjacentDemoLessons(lastLesson.slug)
-    expect(screen.getByText(`← ${lastPrevious.title}`)).toBeInTheDocument()
+    lessonNav = screen.getByRole('navigation', { name: 'Lesson navigation' })
+    expect(within(lessonNav).getByRole('link', { name: new RegExp(lastPrevious.title) })).toBeInTheDocument()
+    expect(within(lessonNav).queryByRole('link', { name: /Next/ })).not.toBeInTheDocument()
     expect(lastNext).toBeNull()
   })
 })

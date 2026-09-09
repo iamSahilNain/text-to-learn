@@ -22,11 +22,11 @@ function moduleStatus(courseModule) {
 function moduleBadge(courseModule) {
   const status = moduleStatus(courseModule)
   if (status === 'empty') return null
-  if (status === 'ready') return { text: 'Ready', className: 'bg-success/15 text-success' }
-  if (status === 'degraded') return { text: 'Fallback', className: 'bg-warning/15 text-warning' }
+  if (status === 'ready') return { text: 'Ready', className: 'text-success' }
+  if (status === 'degraded') return { text: 'Fallback', className: 'text-warning' }
   const lessons = courseModule.lessons
   const ready = lessons.filter((lesson) => lesson.generationStatus === 'ready').length
-  return { text: `${ready} of ${lessons.length} lessons ready`, className: 'bg-surface-raised text-text-muted' }
+  return { text: `${ready} of ${lessons.length} lessons ready`, className: 'text-text-muted' }
 }
 
 // Shared between the private course page and the read-only demo course view.
@@ -37,33 +37,33 @@ export default function ModuleList({ modules, lessonHref }) {
   const navigate = useNavigate()
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       {modules.map((courseModule, moduleIndex) => {
         const badge = moduleBadge(courseModule)
         return (
-          <div key={courseModule._id} className="rounded-2xl border border-border bg-surface p-6">
-            <h2 className="mb-4 flex items-center gap-2 text-xl font-semibold text-accent">
-              Module {moduleIndex + 1}: {courseModule.title}
-              {badge && (
-                <span className={`rounded-full px-2 py-0.5 text-xs ${badge.className}`}>{badge.text}</span>
-              )}
+          <section key={courseModule._id}>
+            <h2 className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-border pb-3 text-2xl text-text">
+              <span className="font-sans text-sm text-text-muted">Module {moduleIndex + 1}:</span>{' '}
+              <span>{courseModule.title}</span>
+              {badge && <span className={`font-sans text-sm ${badge.className}`}>{badge.text}</span>}
             </h2>
-            <div className="space-y-2">
+            <div className="divide-y divide-border">
               {courseModule.lessons.map((lesson, lessonIndex) => {
                 const lessonBadge = LESSON_BADGE[lesson.generationStatus]
                 return (
                   <button
                     key={lesson._id}
                     onClick={() => navigate(lessonHref(lesson))}
-                    className="flex w-full items-center justify-between rounded-xl bg-surface-raised px-4 py-3 text-left text-text transition hover:bg-border"
+                    className="group flex w-full flex-wrap items-baseline gap-x-4 gap-y-1 px-1 py-3.5 text-left transition hover:bg-surface"
                   >
-                    <span>{lessonIndex + 1}. {lesson.title}</span>
-                    <span className={`text-xs ${lessonBadge.className}`}>{lessonBadge.text}</span>
+                    <span className="w-6 font-mono text-sm text-text-muted">{lessonIndex + 1}.</span>
+                    <span className="flex-1 font-serif text-lg text-text group-hover:text-accent">{lesson.title}</span>
+                    <span className={`text-sm ${lessonBadge.className}`}>{lessonBadge.text}</span>
                   </button>
                 )
               })}
             </div>
-          </div>
+          </section>
         )
       })}
     </div>

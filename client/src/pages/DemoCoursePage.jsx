@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import AppShell from '../components/AppShell'
 import ModuleList from '../components/ModuleList'
 import CourseProgress from '../components/CourseProgress'
@@ -31,9 +31,12 @@ export default function DemoCoursePage() {
   }
 
   return (
-    <AppShell>
+    <AppShell width={960}>
+      <Link to="/" className="mb-8 inline-block text-accent transition hover:text-text">
+        ← Home
+      </Link>
       <div className="mb-6 flex items-center justify-between gap-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-accent">Curated sample</p>
+        <p className="text-sm text-accent">Curated sample</p>
         <button
           onClick={handleExport}
           disabled={exporting}
@@ -47,13 +50,9 @@ export default function DemoCoursePage() {
 
       <h1 className="mb-3 text-4xl font-bold text-text">{course.title}</h1>
       <p className="mb-4 text-text-muted">{course.description}</p>
-      <div className="mb-8 flex flex-wrap gap-2">
-        {course.tags?.map((tag) => (
-          <span key={tag} className="rounded-full bg-accent/15 px-3 py-1 text-sm text-accent">
-            {tag}
-          </span>
-        ))}
-      </div>
+      {course.tags?.length > 0 && (
+        <p className="mb-8 text-sm text-text-muted">{course.tags.join(' · ')}</p>
+      )}
 
       <CourseProgress modules={course.modules} />
 
