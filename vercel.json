@@ -1,0 +1,7 @@
+{
+  "buildCommand": "npm --prefix client ci && VITE_APP_MODE=demo npm --prefix client run build",
+  "outputDirectory": "client/dist",
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

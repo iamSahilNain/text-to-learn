@@ -19,9 +19,9 @@ export default defineConfig([
     },
   },
   {
-    // Test files run under Vitest/jsdom via Node, so they additionally need
+    // Test files and build config run under Node, so they additionally need
     // Node globals. Production sources keep the browser-only global set.
-    files: ['tests/**/*.{js,jsx}', 'vitest.config.js'],
+    files: ['tests/**/*.{js,jsx}', 'vitest.config.js', 'vite.config.js'],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
     },
